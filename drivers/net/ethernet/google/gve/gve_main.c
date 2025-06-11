@@ -2767,11 +2767,17 @@ static const struct netdev_stat_ops gve_stat_ops = {
 	.get_base_stats		= gve_get_base_stats,
 };
 
+static bool gve_check_mailbox_mode(const struct pci_dev *pdev)
+{
+	return false;
+}
+
 static int gve_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	int max_tx_queues, max_rx_queues;
 	struct net_device *dev;
 	struct gve_registers __iomem *reg_bar;
+	bool mailbox_mode = false;
 	struct gve_priv *priv;
 	int err;
 
@@ -2797,6 +2803,8 @@ static int gve_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		err = -ENOMEM;
 		goto abort_with_pci_region;
 	}
+
+	mailbox_mode = gve_check_mailbox_mode(pdev);
 
 	/* Get max queues to alloc etherdev */
 	max_tx_queues = ioread32be(&reg_bar->max_tx_queues);
@@ -2843,6 +2851,7 @@ static int gve_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	priv->ethtool_flags = 0x0;
 	priv->rx_cfg.packet_buffer_size = GVE_DEFAULT_RX_BUFFER_SIZE;
 	priv->max_rx_buffer_size = GVE_DEFAULT_RX_BUFFER_SIZE;
+	priv->mailbox_mode = mailbox_mode;
 
 	err = gve_adminq_init(priv);
 	if (err) {

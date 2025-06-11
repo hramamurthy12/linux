@@ -943,6 +943,9 @@ struct gve_priv {
 	u32 adminq_cfg_rss_cnt;
 	u32 adminq_query_rss_cnt;
 
+	/* Mailbox Queue */
+	bool mailbox_mode;
+
 	/* Global stats */
 	u32 interface_up_cnt; /* count of times interface turned up since last reset */
 	u32 interface_down_cnt; /* count of times interface turned down since last reset */
