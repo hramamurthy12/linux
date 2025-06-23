@@ -831,6 +831,8 @@ struct gve_mailbox {
 	struct gve_priv *priv;
 	struct gve_mbx_queue *mbx_rx;
 	struct gve_mbx_queue *mbx_tx;
+	struct gve_dma_mem **mbx_rx_bufs;
+	struct gve_dma_mem *mbx_dma_mem;
 };
 
 /**

@@ -29,6 +29,88 @@ static void gve_mbx_reg_init(struct gve_mbx_queue *mbx_q, void __iomem *bar0)
 		  &mbx_q->reg->queue_len);
 }
 
+static void gve_free_mbx_rcv_buffers(struct gve_mailbox *mailbox)
+{
+	u16 ring_size = mailbox->mbx_rx->ring_size;
+	int i;
+
+	if (!mailbox->mbx_rx || !mailbox->mbx_dma_mem)
+		return;
+
+	for (i = 0; i < ring_size; i++) {
+		struct gve_dma_mem *rx_buf;
+
+		rx_buf = &mailbox->mbx_dma_mem[i];
+		if (rx_buf->va)
+			dma_free_coherent(&mailbox->pdev->dev, rx_buf->size,
+					  rx_buf->va, rx_buf->pa);
+	}
+
+	kfree(mailbox->mbx_dma_mem);
+	mailbox->mbx_dma_mem = NULL;
+
+	kfree(mailbox->mbx_rx_bufs);
+	mailbox->mbx_rx_bufs = NULL;
+}
+
+static int gve_alloc_mbx_rcv_buffers(struct gve_mailbox *mailbox)
+{
+	u16 ring_size = mailbox->mbx_rx->ring_size;
+	int i;
+
+	mailbox->mbx_rx_bufs = kcalloc(ring_size, sizeof(struct gve_dma_mem *),
+				       GFP_KERNEL);
+
+	if (!mailbox->mbx_rx_bufs)
+		return -ENOMEM;
+
+	mailbox->mbx_dma_mem = kcalloc(ring_size, sizeof(struct gve_dma_mem),
+				       GFP_KERNEL);
+
+	if (!mailbox->mbx_dma_mem) {
+		kfree(mailbox->mbx_rx_bufs);
+		mailbox->mbx_rx_bufs = NULL;
+		return -ENOMEM;
+	}
+
+	for (i = 0; i < ring_size - 1; i++) {
+		struct gve_dma_mem *rx_buf;
+
+		mailbox->mbx_rx_bufs[i] = &mailbox->mbx_dma_mem[i];
+		rx_buf = mailbox->mbx_rx_bufs[i];
+		rx_buf->va = dma_alloc_coherent(&mailbox->pdev->dev,
+						GVE_MBX_BUF_SIZE, &rx_buf->pa,
+						GFP_KERNEL);
+		if (!rx_buf->va) {
+			goto err_free_bufs;
+		}
+		rx_buf->size = GVE_MBX_BUF_SIZE;
+	}
+	mailbox->mbx_rx->next_to_post = ring_size - 1;
+
+	return 0;
+
+err_free_bufs:
+	gve_free_mbx_rcv_buffers(mailbox);
+	return -ENOMEM;
+}
+
+static void gve_post_initial_rx_bufs(struct gve_mailbox *mailbox)
+{
+	struct gve_mbx_queue *mbx_rx = mailbox->mbx_rx;
+	int i;
+
+	for (i = 0; i < mbx_rx->ring_size - 1; i++) {
+		struct gve_mbx_desc *desc = GVE_MBX_DESC(mbx_rx, i);
+		struct gve_dma_mem *gve_rx_buf = mailbox->mbx_rx_bufs[i];
+
+		desc->flags = cpu_to_le16(GVE_MBX_FLAG_BUF | GVE_MBX_FLAG_RD);
+		desc->addr_high = cpu_to_le32(upper_32_bits(gve_rx_buf->pa));
+		desc->addr_low = cpu_to_le32(lower_32_bits(gve_rx_buf->pa));
+		desc->buf_len = GVE_MBX_BUF_SIZE;
+	}
+}
+
 static int gve_alloc_mbx_desc_ring(struct gve_mailbox *mailbox,
 				   struct gve_dma_mem *desc_ring,
 				   u16 ring_size)
@@ -67,6 +149,7 @@ void gve_free_mailbox(struct gve_mailbox *mailbox, void __iomem *reg_bar0)
 	if (err)
 		dev_err(&mailbox->pdev->dev, "Failed to reset in mailbox mode\n");
 
+	gve_free_mbx_rcv_buffers(mailbox);
 	gve_free_mbx_desc_ring(mailbox, mailbox->mbx_rx);
 	gve_free_mbx_desc_ring(mailbox, mailbox->mbx_tx);
 
@@ -105,8 +188,15 @@ static int gve_alloc_mailbox(struct gve_mailbox *mailbox)
 	if (err)
 		goto free_mbx_tx_desc_ring;
 
+	err = gve_alloc_mbx_rcv_buffers(mailbox);
+	if (err)
+		goto free_mbx_rx_desc_ring;
+
+	gve_post_initial_rx_bufs(mailbox);
 	return 0;
 
+free_mbx_rx_desc_ring:
+	gve_free_mbx_desc_ring(mailbox, mailbox->mbx_rx);
 free_mbx_tx_desc_ring:
 	gve_free_mbx_desc_ring(mailbox, mailbox->mbx_tx);
 free_mbx_rx:

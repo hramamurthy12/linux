@@ -22,6 +22,16 @@
 #define GVE_MBX_Q_ENABLE_M		BIT(31)
 
 #define GVE_MBX_DEFAULT_RING_SIZE	64
+#define GVE_MBX_BUF_SIZE                4096
+
+#define GVE_MBX_FLAG_RD_S               10
+#define GVE_MBX_FLAG_BUF_S              12
+
+#define GVE_MBX_FLAG_RD                 BIT(GVE_MBX_FLAG_RD_S)
+#define GVE_MBX_FLAG_BUF                BIT(GVE_MBX_FLAG_BUF_S)
+
+#define GVE_MBX_DESC(R, i) \
+	(&(((struct gve_mbx_desc *)((R)->desc_ring.va))[i]))
 
 struct gve_mailbox;
 
