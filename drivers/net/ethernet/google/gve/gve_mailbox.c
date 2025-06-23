@@ -29,6 +29,266 @@ static void gve_mbx_reg_init(struct gve_mbx_queue *mbx_q, void __iomem *bar0)
 		  &mbx_q->reg->queue_len);
 }
 
+static bool gve_mbx_reset_detected(struct gve_mailbox *mailbox)
+{
+	struct gve_mbx_queue *mbx_rx = mailbox->mbx_rx;
+
+	if (!mbx_rx)
+		return true;
+
+	return !(ioread32(&mbx_rx->reg->queue_len) & GVE_MBX_RX_LEN_M);
+}
+
+static void gve_clean_send_mbx(struct gve_mailbox *mailbox)
+{
+	struct gve_mbx_queue *mbx_tx = mailbox->mbx_tx;
+	struct gve_dma_mem *clean_msg;
+	struct gve_mbx_desc *desc;
+	u16 num_to_clean;
+	u16 ntc;
+	int i;
+
+	/* Attempt to clean the entire queue */
+	num_to_clean = mbx_tx->ring_size;
+	ntc = mbx_tx->next_to_clean;
+
+	for (i = 0; i < num_to_clean; i++) {
+		/* should clean from ntc */
+		desc = GVE_MBX_DESC(mbx_tx, ntc);
+
+		/* check if desc is marked as done */
+		if (!(le16_to_cpu(desc->flags) & GVE_MBX_FLAG_DD))
+			break;
+
+		clean_msg = mailbox->mbx_tx_bufs[ntc];
+		if (clean_msg) {
+			dma_free_coherent(&mailbox->pdev->dev, clean_msg->size,
+					  clean_msg->va, clean_msg->pa);
+			kfree(clean_msg);
+		}
+
+		mailbox->mbx_tx_bufs[ntc] = NULL;
+		memset(desc, 0, sizeof(*desc));
+
+		ntc++;
+		if (ntc == mbx_tx->ring_size)
+			ntc = 0;
+	}
+
+	mbx_tx->next_to_clean = ntc;
+}
+
+int gve_send_mbx_msg(struct gve_mailbox *mailbox, u32 opcode, u16 msg_size,
+		     u8 *msg)
+{
+	struct gve_mbx_queue *mbx_tx = mailbox->mbx_tx;
+	struct gve_mbx_desc *send_desc;
+	struct gve_dma_mem *send_msg;
+	u16 flags = 0;
+	int err = 0;
+
+	/* check for reset */
+	if (gve_mbx_reset_detected(mailbox)) {
+		dev_err_ratelimited(&mailbox->pdev->dev,
+				    "Reset detected, cannot send mbx msg\n");
+		return -EBUSY;
+	}
+
+	/* reclaim TX mbx descriptors */
+	gve_clean_send_mbx(mailbox);
+
+	send_desc = GVE_MBX_DESC(mbx_tx, mbx_tx->next_to_use);
+
+	send_msg = kzalloc(sizeof(*send_msg), GFP_ATOMIC);
+	if (!send_msg)
+		return -ENOMEM;
+
+	send_desc->destination = cpu_to_le16(GVE_MBX_CONTROL_PLANE);
+	send_desc->pfid_vfid = 0;
+	send_desc->buf_len = cpu_to_le16(msg_size);
+	send_desc->cmd_opcode = cpu_to_le32(opcode);
+
+	/* paylod */
+	send_msg->va = dma_alloc_coherent(&mailbox->pdev->dev, GVE_MBX_BUF_SIZE,
+					  &send_msg->pa, GFP_ATOMIC);
+
+	if (!send_msg->va) {
+		err = -ENOMEM;
+		goto dma_alloc_error;
+	}
+	send_msg->size = GVE_MBX_BUF_SIZE;
+
+	send_desc->addr_high = cpu_to_le32(upper_32_bits(send_msg->pa));
+	send_desc->addr_low = cpu_to_le32(lower_32_bits(send_msg->pa));
+
+	/* set required flags */
+	flags |= GVE_MBX_FLAG_BUF;
+	flags |= GVE_MBX_FLAG_RD;
+
+	send_desc->flags = cpu_to_le16(flags);
+
+	if (msg && msg_size)
+		memcpy(send_msg->va, msg, msg_size);
+
+	mailbox->mbx_tx_bufs[mbx_tx->next_to_use] = send_msg;
+
+	mbx_tx->next_to_use++;
+	if (mbx_tx->next_to_use == mbx_tx->ring_size)
+		mbx_tx->next_to_use = 0;
+
+	dma_wmb();
+	iowrite32(mbx_tx->next_to_use, &mailbox->mbx_tx->reg->queue_tail);
+	return 0;
+
+dma_alloc_error:
+	kfree(send_msg);
+	return err;
+}
+
+static void gve_post_rx_buffs(struct gve_mailbox *mailbox)
+{
+	struct gve_mbx_queue *mbx_rx = mailbox->mbx_rx;
+	u16 ntp = mbx_rx->next_to_post;
+	struct gve_mbx_desc *desc;
+
+	/* no buffers to clean */
+	if (((ntp + 1) % mbx_rx->ring_size) == mbx_rx->next_to_clean)
+		return;
+
+	while (((ntp + 1) % mbx_rx->ring_size) != mbx_rx->next_to_clean) {
+		desc = GVE_MBX_DESC(mbx_rx, ntp);
+
+		if (mailbox->mbx_rx_bufs[ntp])
+			goto prep_desc;
+
+		mailbox->mbx_rx_bufs[ntp] = &mailbox->mbx_dma_mem[ntp];
+
+prep_desc:
+		desc->flags = cpu_to_le16(GVE_MBX_FLAG_BUF | GVE_MBX_FLAG_RD);
+		desc->buf_len = cpu_to_le16(GVE_MBX_BUF_SIZE);
+		desc->addr_high =
+			cpu_to_le32(upper_32_bits(mailbox->mbx_rx_bufs[ntp]->pa));
+		desc->addr_low =
+			cpu_to_le32(lower_32_bits(mailbox->mbx_rx_bufs[ntp]->pa));
+
+		ntp++;
+		if (ntp == mbx_rx->ring_size)
+			ntp = 0;
+	}
+
+	/* update tail if buffers were posted */
+	if (mbx_rx->next_to_post != ntp) {
+		if (ntp)
+			mbx_rx->next_to_post = ntp - 1;
+		else
+			mbx_rx->next_to_post = mbx_rx->ring_size - 1;
+
+		dma_wmb();
+		iowrite32(mbx_rx->next_to_post, &mbx_rx->reg->queue_tail);
+	}
+}
+
+static int gve_process_mbx_msg(struct gve_mailbox *mailbox, u32 opcode,
+			       struct gve_dma_mem *recv_msg)
+{
+	int err = 0;
+
+	switch (opcode) {
+	default:
+		err = -EBADMSG;
+		dev_err_ratelimited(&mailbox->pdev->dev,
+				    "Received unrecognized opcode = %d\n",
+				    opcode);
+	}
+
+	return err;
+}
+
+static void gve_process_mbx_resp_status(struct gve_mailbox *mailbox,
+					struct gve_mbx_desc *recv_desc)
+{
+	dev_err_ratelimited(&mailbox->pdev->dev,
+		"Error 0x%04X received in mailbox response for opcode 0x%04X\n",
+		recv_desc->cmd_retval, recv_desc->cmd_opcode);
+
+	/* GVE_MBX_STATUS_UNAVAILABLE_ERROR means that the device is in
+	 * an unrecoverable state. Trigger reset.
+	 */
+	if (recv_desc->cmd_retval == GVE_MBX_STATUS_UNAVAILABLE_ERROR &&
+	    mailbox->priv)
+		gve_schedule_reset(mailbox->priv);
+}
+
+int gve_receive_mbx_msg(struct gve_mailbox *mailbox)
+{
+	struct gve_mbx_queue *mbx_rx = mailbox->mbx_rx;
+	struct gve_mbx_desc *recv_desc;
+	struct gve_dma_mem *recv_msg;
+	u16 ntc, flags;
+	int err = 0;
+	u32 opcode;
+
+	spin_lock(&mbx_rx->q_lock);
+
+	ntc = mbx_rx->next_to_clean;
+	recv_desc = GVE_MBX_DESC(mbx_rx, ntc);
+	flags = le16_to_cpu(recv_desc->flags);
+
+	/* check if desc is marked as done */
+	if (!(flags & GVE_MBX_FLAG_DD)) {
+		err = -EAGAIN;
+		goto err_unlock;
+	}
+	dma_rmb();
+
+	recv_msg = mailbox->mbx_rx_bufs[ntc];
+
+	/* check for error status code in response */
+	if (le16_to_cpu(recv_desc->cmd_retval) != GVE_MBX_STATUS_PASSED) {
+		gve_process_mbx_resp_status(mailbox, recv_desc);
+		err = -EBADMSG;
+		goto update_tail;
+	}
+
+	if (!recv_desc->buf_len) {
+		/* buffer not used, should not reach this condition */
+		err = -EBADMSG;
+		dev_err_ratelimited(&mailbox->pdev->dev, "Direct message received, buf_len in descriptor set to 0\n");
+		goto update_tail;
+	}
+
+	opcode = le32_to_cpu(recv_desc->cmd_opcode);
+	err = gve_process_mbx_msg(mailbox, opcode, recv_msg);
+	if (err)
+		dev_err_ratelimited(&mailbox->pdev->dev,
+				    "Error received for opcode 0x%04x\n",
+				    opcode);
+
+update_tail:
+	memset(recv_desc, 0, sizeof(*recv_desc));
+
+	/* set to NULL so this can be posted back in post_buffers */
+	mailbox->mbx_rx_bufs[ntc] = NULL;
+
+	/* update next_to_clean */
+	ntc++;
+	if (ntc == mbx_rx->ring_size)
+		ntc = 0;
+
+	mailbox->mbx_rx->next_to_clean = ntc;
+
+	spin_unlock(&mbx_rx->q_lock);
+
+	/* post the buffers back */
+	gve_post_rx_buffs(mailbox);
+
+	return err;
+
+err_unlock:
+	spin_unlock(&mbx_rx->q_lock);
+	return err;
+}
+
 static void gve_free_mbx_rcv_buffers(struct gve_mailbox *mailbox)
 {
 	u16 ring_size = mailbox->mbx_rx->ring_size;
@@ -109,6 +369,7 @@ static void gve_post_initial_rx_bufs(struct gve_mailbox *mailbox)
 		desc->addr_low = cpu_to_le32(lower_32_bits(gve_rx_buf->pa));
 		desc->buf_len = GVE_MBX_BUF_SIZE;
 	}
+	dma_wmb();
 }
 
 static int gve_alloc_mbx_desc_ring(struct gve_mailbox *mailbox,
@@ -150,6 +411,8 @@ void gve_free_mailbox(struct gve_mailbox *mailbox, void __iomem *reg_bar0)
 		dev_err(&mailbox->pdev->dev, "Failed to reset in mailbox mode\n");
 
 	gve_free_mbx_rcv_buffers(mailbox);
+	kfree(mailbox->mbx_tx_bufs);
+
 	gve_free_mbx_desc_ring(mailbox, mailbox->mbx_rx);
 	gve_free_mbx_desc_ring(mailbox, mailbox->mbx_tx);
 
@@ -188,13 +451,21 @@ static int gve_alloc_mailbox(struct gve_mailbox *mailbox)
 	if (err)
 		goto free_mbx_tx_desc_ring;
 
+	mailbox->mbx_tx_bufs = kcalloc(mailbox->mbx_tx->ring_size,
+				       sizeof(struct gve_dma_mem *),
+				       GFP_KERNEL);
+	if (!mailbox->mbx_tx_bufs)
+		goto free_mbx_rx_desc_ring;
+
 	err = gve_alloc_mbx_rcv_buffers(mailbox);
 	if (err)
-		goto free_mbx_rx_desc_ring;
+		goto free_mbx_tx_bufs;
 
 	gve_post_initial_rx_bufs(mailbox);
 	return 0;
 
+free_mbx_tx_bufs:
+	kfree(mailbox->mbx_tx_bufs);
 free_mbx_rx_desc_ring:
 	gve_free_mbx_desc_ring(mailbox, mailbox->mbx_rx);
 free_mbx_tx_desc_ring:

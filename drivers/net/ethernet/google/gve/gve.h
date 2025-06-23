@@ -833,6 +833,7 @@ struct gve_mailbox {
 	struct gve_mbx_queue *mbx_tx;
 	struct gve_dma_mem **mbx_rx_bufs;
 	struct gve_dma_mem *mbx_dma_mem;
+	struct gve_dma_mem **mbx_tx_bufs;
 };
 
 /**

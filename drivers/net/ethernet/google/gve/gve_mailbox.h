@@ -17,16 +17,22 @@
 #define GVE_MBX_RESET_STATUS		(GVE_MBX_BASE + 0x7008)
 
 #define GVE_MBX_RX_BASE			GVE_MBX_BASE
+#define GVE_MBX_RX_LEN_M		GENMASK(12, 0)
 #define GVE_MBX_TX_BASE			(GVE_MBX_BASE + 0x14)
 
 #define GVE_MBX_Q_ENABLE_M		BIT(31)
 
 #define GVE_MBX_DEFAULT_RING_SIZE	64
 #define GVE_MBX_BUF_SIZE                4096
+#define GVE_MBX_CONTROL_PLANE		0x0801
 
+#define GVE_MBX_FLAG_DD_S		0
+#define GVE_MBX_FLAG_ERR_S		2
 #define GVE_MBX_FLAG_RD_S               10
 #define GVE_MBX_FLAG_BUF_S              12
 
+#define GVE_MBX_FLAG_DD			BIT(GVE_MBX_FLAG_DD_S)
+#define GVE_MBX_FLAG_ERR		BIT(GVE_MBX_FLAG_ERR_S)
 #define GVE_MBX_FLAG_RD                 BIT(GVE_MBX_FLAG_RD_S)
 #define GVE_MBX_FLAG_BUF                BIT(GVE_MBX_FLAG_BUF_S)
 
@@ -49,6 +55,28 @@ struct gve_mbx_registers {
 	__le32 queue_len;
 	__le32 queue_head;
 	__le32 queue_tail;
+};
+
+enum gve_mbx_status {
+	GVE_MBX_STATUS_UNSET				= 0,
+	GVE_MBX_STATUS_PASSED				= 1,
+	GVE_MBX_STATUS_UNSUPPORTED_ERROR		= 0xFFEF,
+	GVE_MBX_STATUS_ABORTED_ERROR			= 0xFFF0,
+	GVE_MBX_STATUS_ALREADY_EXISTS_ERROR		= 0xFFF1,
+	GVE_MBX_STATUS_CANCELLED_ERROR			= 0xFFF2,
+	GVE_MBX_STATUS_DATA_LOSS_ERROR			= 0xFFF3,
+	GVE_MBX_STATUS_DEADLINE_EXCEEDED_ERROR		= 0xFFF4,
+	GVE_MBX_STATUS_FAILED_PRECONDITION_ERROR	= 0xFFF5,
+	GVE_MBX_STATUS_INTERNAL_ERROR			= 0xFFF6,
+	GVE_MBX_STATUS_INVALID_ARGUMENT_ERROR		= 0xFFF7,
+	GVE_MBX_STATUS_NOT_FOUND_ERROR			= 0xFFF8,
+	GVE_MBX_STATUS_OUT_OF_RANGE_ERROR		= 0xFFF9,
+	GVE_MBX_STATUS_PERMISSION_DENIED_ERROR		= 0xFFFA,
+	GVE_MBX_STATUS_UNAUTHENTICATED_ERROR		= 0xFFFB,
+	GVE_MBX_STATUS_RESOURCE_EXHAUSTED_ERROR		= 0xFFFC,
+	GVE_MBX_STATUS_UNAVAILABLE_ERROR		= 0xFFFD,
+	GVE_MBX_STATUS_UNIMPLEMENTED_ERROR		= 0xFFFE,
+	GVE_MBX_STATUS_UNKNOWN_ERROR			= 0xFFFF,
 };
 
 enum gve_mbx_queue_type {
@@ -87,6 +115,9 @@ struct gve_mbx_desc {
 	__le32 addr_low;		/* of the allocated buffer */
 };
 
+int gve_send_mbx_msg(struct gve_mailbox *mailbox, u32 opcode, u16 msg_size,
+		     u8 *msg);
+int gve_receive_mbx_msg(struct gve_mailbox *mailbox);
 void gve_free_mailbox(struct gve_mailbox *mailbox, void __iomem *reg_bar0);
 int gve_initialize_mbx(struct gve_mailbox *mailbox, void __iomem *reg_bar0);
 int gve_mbx_reset(struct gve_mailbox *mailbox, void __iomem *reg_bar0);
