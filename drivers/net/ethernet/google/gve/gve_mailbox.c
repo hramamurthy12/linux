@@ -78,8 +78,80 @@ static void gve_clean_send_mbx(struct gve_mailbox *mailbox)
 	mbx_tx->next_to_clean = ntc;
 }
 
+static int gve_mbx_get_free_send_idx(struct gve_mbx_msg_queue *mbx_msg_queue,
+				     u16 *cookie)
+{
+	int idx;
+
+	idx = find_first_zero_bit(mbx_msg_queue->msg_queue_map,
+				  mbx_msg_queue->size);
+
+	if (idx >= mbx_msg_queue->size)
+		return -EBUSY;
+
+	*cookie = idx;
+	return 0;
+}
+
+int gve_send_mbx_msg_wait(struct gve_mailbox *mailbox, u32 opcode, u16 msg_size,
+			  u8 *msg)
+{
+	struct gve_mbx_msg_queue *mbx_msg_queue = mailbox->mbx_msg_queue;
+	struct gve_mbx_msg *mbx_msg;
+	u16 cookie;
+	int err;
+
+	mbx_msg = kzalloc(sizeof(*mbx_msg), GFP_KERNEL);
+	if (!mbx_msg)
+		return -ENOMEM;
+
+	init_completion(&mbx_msg->work);
+
+	spin_lock(&mbx_msg_queue->mbx_msg_q_lock);
+
+	/* get cookie */
+	if (gve_mbx_get_free_send_idx(mbx_msg_queue, &cookie)) {
+		err = -EBUSY;
+		goto err_unlock;
+	}
+
+	mbx_msg->sw_cookie = cookie;
+	set_bit(cookie, mbx_msg_queue->msg_queue_map);
+	mailbox->mbx_msgs[cookie] = mbx_msg;
+
+	err = gve_send_mbx_msg(mailbox, opcode, msg_size, msg, cookie);
+	if (err)
+		goto err_unmap_cookie;
+
+	spin_unlock(&mbx_msg_queue->mbx_msg_q_lock);
+
+	/* wait for completion with timeout */
+	if (!wait_for_completion_timeout(&mbx_msg->work,
+					 msecs_to_jiffies(GVE_MBX_MSG_TIMEOUT_MSEC))) {
+		err = -ETIMEDOUT;
+		goto err_lock_free_cookie;
+	}
+
+	if (mbx_msg->status == GVE_MBX_STATUS_PASSED)
+		err = 0;
+	else
+		err = -EBADMSG;
+
+err_lock_free_cookie:
+	spin_lock(&mailbox->mbx_msg_queue->mbx_msg_q_lock);
+
+err_unmap_cookie:
+	clear_bit(cookie, mbx_msg_queue->msg_queue_map);
+	mailbox->mbx_msgs[cookie] = NULL;
+
+err_unlock:
+	spin_unlock(&mailbox->mbx_msg_queue->mbx_msg_q_lock);
+	kfree(mbx_msg);
+	return err;
+}
+
 int gve_send_mbx_msg(struct gve_mailbox *mailbox, u32 opcode, u16 msg_size,
-		     u8 *msg)
+		     u8 *msg, u16 cookie)
 {
 	struct gve_mbx_queue *mbx_tx = mailbox->mbx_tx;
 	struct gve_mbx_desc *send_desc;
@@ -107,6 +179,7 @@ int gve_send_mbx_msg(struct gve_mailbox *mailbox, u32 opcode, u16 msg_size,
 	send_desc->pfid_vfid = 0;
 	send_desc->buf_len = cpu_to_le16(msg_size);
 	send_desc->cmd_opcode = cpu_to_le32(opcode);
+	send_desc->cmd_cookie = cpu_to_le16(cookie);
 
 	/* paylod */
 	send_msg->va = dma_alloc_coherent(&mailbox->pdev->dev, GVE_MBX_BUF_SIZE,
@@ -219,6 +292,32 @@ static void gve_process_mbx_resp_status(struct gve_mailbox *mailbox,
 		gve_schedule_reset(mailbox->priv);
 }
 
+static void gve_process_mbx_resp_completion(struct gve_mailbox *mailbox,
+					    struct gve_mbx_desc *recv_desc)
+{
+	struct gve_mbx_msg_queue *mbx_msg_q = mailbox->mbx_msg_queue;
+	struct gve_mbx_msg *mbx_msg;
+	u16 cookie;
+	int err;
+
+	err = le16_to_cpu(recv_desc->cmd_retval);
+	cookie = le16_to_cpu(recv_desc->cmd_cookie);
+
+	if (cookie >= mbx_msg_q->size) {
+		dev_err_ratelimited(&mailbox->pdev->dev,
+				    "Received invalid cookie = %d\n", cookie);
+		return;
+	}
+
+	spin_lock(&mbx_msg_q->mbx_msg_q_lock);
+	if (mailbox->mbx_msgs[cookie]) {
+		mbx_msg = mailbox->mbx_msgs[cookie];
+		mbx_msg->status = err;
+		complete(&mbx_msg->work);
+	}
+	spin_unlock(&mbx_msg_q->mbx_msg_q_lock);
+}
+
 int gve_receive_mbx_msg(struct gve_mailbox *mailbox)
 {
 	struct gve_mbx_queue *mbx_rx = mailbox->mbx_rx;
@@ -246,6 +345,7 @@ int gve_receive_mbx_msg(struct gve_mailbox *mailbox)
 	/* check for error status code in response */
 	if (le16_to_cpu(recv_desc->cmd_retval) != GVE_MBX_STATUS_PASSED) {
 		gve_process_mbx_resp_status(mailbox, recv_desc);
+		gve_process_mbx_resp_completion(mailbox, recv_desc);
 		err = -EBADMSG;
 		goto update_tail;
 	}
@@ -263,6 +363,7 @@ int gve_receive_mbx_msg(struct gve_mailbox *mailbox)
 		dev_err_ratelimited(&mailbox->pdev->dev,
 				    "Error received for opcode 0x%04x\n",
 				    opcode);
+	gve_process_mbx_resp_completion(mailbox, recv_desc);
 
 update_tail:
 	memset(recv_desc, 0, sizeof(*recv_desc));
@@ -402,6 +503,23 @@ static void gve_free_mbx_desc_ring(struct gve_mailbox *mailbox,
 	desc_ring->pa  = 0;
 }
 
+static void gve_free_mbx_msg_queue(struct gve_mailbox *mailbox)
+{
+	int i;
+
+	if (!mailbox->mbx_msg_queue)
+		return;
+
+	for (i = 0; i < mailbox->mbx_msg_queue->size; i++)
+		kfree(mailbox->mbx_msgs[i]);
+
+	kfree(mailbox->mbx_msgs);
+	mailbox->mbx_msgs = NULL;
+	bitmap_free(mailbox->mbx_msg_queue->msg_queue_map);
+	kfree(mailbox->mbx_msg_queue);
+	mailbox->mbx_msg_queue = NULL;
+}
+
 void gve_free_mailbox(struct gve_mailbox *mailbox, void __iomem *reg_bar0)
 {
 	int err;
@@ -410,6 +528,7 @@ void gve_free_mailbox(struct gve_mailbox *mailbox, void __iomem *reg_bar0)
 	if (err)
 		dev_err(&mailbox->pdev->dev, "Failed to reset in mailbox mode\n");
 
+	gve_free_mbx_msg_queue(mailbox);
 	gve_free_mbx_rcv_buffers(mailbox);
 	kfree(mailbox->mbx_tx_bufs);
 
@@ -420,6 +539,44 @@ void gve_free_mailbox(struct gve_mailbox *mailbox, void __iomem *reg_bar0)
 	mailbox->mbx_rx = NULL;
 	kfree(mailbox->mbx_tx);
 	mailbox->mbx_tx = NULL;
+}
+
+static int gve_alloc_mbx_msg_queue(struct gve_mailbox *mailbox)
+{
+	struct gve_mbx_msg_queue *mbx_msg_queue;
+	int err;
+
+	mailbox->mbx_msg_queue = kzalloc(sizeof(*mailbox->mbx_msg_queue),
+					 GFP_KERNEL);
+	if (!mailbox->mbx_msg_queue)
+		return -ENOMEM;
+
+	mbx_msg_queue = mailbox->mbx_msg_queue;
+	mbx_msg_queue->size = GVE_MBX_MSG_QUEUE_LEN;
+	mbx_msg_queue->msg_queue_map = bitmap_zalloc(mbx_msg_queue->size,
+						     GFP_KERNEL);
+
+	if (!mbx_msg_queue->msg_queue_map) {
+		err = -ENOMEM;
+		goto err_free_msg_queue;
+	}
+
+	mailbox->mbx_msgs = kcalloc(mbx_msg_queue->size,
+				    sizeof(struct gve_mbx_msg *), GFP_KERNEL);
+	if (!mailbox->mbx_msgs) {
+		err = -ENOMEM;
+		goto err_free_msg_queue_map;
+	}
+
+	spin_lock_init(&mbx_msg_queue->mbx_msg_q_lock);
+	return 0;
+
+err_free_msg_queue_map:
+	bitmap_free(mailbox->mbx_msg_queue->msg_queue_map);
+err_free_msg_queue:
+	kfree(mailbox->mbx_msg_queue);
+	mailbox->mbx_msg_queue = NULL;
+	return err;
 }
 
 static int gve_alloc_mailbox(struct gve_mailbox *mailbox)
@@ -461,9 +618,15 @@ static int gve_alloc_mailbox(struct gve_mailbox *mailbox)
 	if (err)
 		goto free_mbx_tx_bufs;
 
+	err = gve_alloc_mbx_msg_queue(mailbox);
+	if (err)
+		goto free_mbx_rcv_bufs;
+
 	gve_post_initial_rx_bufs(mailbox);
 	return 0;
 
+free_mbx_rcv_bufs:
+	gve_free_mbx_rcv_buffers(mailbox);
 free_mbx_tx_bufs:
 	kfree(mailbox->mbx_tx_bufs);
 free_mbx_rx_desc_ring:

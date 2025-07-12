@@ -23,6 +23,8 @@
 #define GVE_MBX_Q_ENABLE_M		BIT(31)
 
 #define GVE_MBX_DEFAULT_RING_SIZE	64
+/* Length of msg Q is < mbx Q to allow for async msgs from the device */
+#define GVE_MBX_MSG_QUEUE_LEN		48
 #define GVE_MBX_BUF_SIZE                4096
 #define GVE_MBX_CONTROL_PLANE		0x0801
 
@@ -38,6 +40,8 @@
 
 #define GVE_MBX_DESC(R, i) \
 	(&(((struct gve_mbx_desc *)((R)->desc_ring.va))[i]))
+
+#define GVE_MBX_MSG_TIMEOUT_MSEC	60000
 
 struct gve_mailbox;
 
@@ -97,6 +101,20 @@ struct gve_mbx_queue {
 	spinlock_t q_lock; /* mbx q lock */
 };
 
+/* Queue which has a list of outstanding commands */
+struct gve_mbx_msg_queue {
+	unsigned long *msg_queue_map;
+	struct gve_mbx_msg **mbx_msgs;
+	spinlock_t mbx_msg_q_lock; /* mbx msg Q lock */
+	u16 size;
+};
+
+struct gve_mbx_msg {
+	struct completion work;
+	u16 sw_cookie;
+	int status;
+};
+
 struct gve_mbx_desc {
 	__le16 flags;			/* DD bit, extra payload etc */
 	__le16 destination;		/* send to CP/HMA 0x0801 */
@@ -115,8 +133,10 @@ struct gve_mbx_desc {
 	__le32 addr_low;		/* of the allocated buffer */
 };
 
+int gve_send_mbx_msg_wait(struct gve_mailbox *mailbox, u32 opcode, u16 msg_size,
+			  u8 *msg);
 int gve_send_mbx_msg(struct gve_mailbox *mailbox, u32 opcode, u16 msg_size,
-		     u8 *msg);
+		     u8 *msg, u16 cookie);
 int gve_receive_mbx_msg(struct gve_mailbox *mailbox);
 void gve_free_mailbox(struct gve_mailbox *mailbox, void __iomem *reg_bar0);
 int gve_initialize_mbx(struct gve_mailbox *mailbox, void __iomem *reg_bar0);
