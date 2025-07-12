@@ -133,6 +133,7 @@ struct gve_mbx_desc {
 	__le32 addr_low;		/* of the allocated buffer */
 };
 
+void gve_mbx_task(struct work_struct *work);
 int gve_send_mbx_msg_wait(struct gve_mailbox *mailbox, u32 opcode, u16 msg_size,
 			  u8 *msg);
 int gve_send_mbx_msg(struct gve_mailbox *mailbox, u32 opcode, u16 msg_size,

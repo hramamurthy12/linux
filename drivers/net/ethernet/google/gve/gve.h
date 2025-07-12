@@ -836,6 +836,8 @@ struct gve_mailbox {
 	struct gve_dma_mem **mbx_tx_bufs;
 	struct gve_mbx_msg_queue *mbx_msg_queue;
 	struct gve_mbx_msg **mbx_msgs;
+	struct workqueue_struct *gve_mbx_wq;
+	struct delayed_work gve_mbx_task;
 };
 
 /**

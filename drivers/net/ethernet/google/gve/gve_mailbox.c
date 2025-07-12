@@ -8,6 +8,19 @@
 #include "gve.h"
 #include "gve_mailbox.h"
 
+void gve_mbx_task(struct work_struct *work)
+{
+	struct gve_mailbox *mailbox;
+	int err;
+
+	mailbox = container_of(work, struct gve_mailbox, gve_mbx_task.work);
+
+	queue_delayed_work(mailbox->gve_mbx_wq, &mailbox->gve_mbx_task,
+			   usecs_to_jiffies(300));
+
+	err = gve_receive_mbx_msg(mailbox);
+}
+
 static void gve_mbx_reg_init(struct gve_mbx_queue *mbx_q, void __iomem *bar0)
 {
 	if (mbx_q->q_type == GVE_GVE_MBX_Q_TYPE_RX) {
@@ -528,6 +541,12 @@ void gve_free_mailbox(struct gve_mailbox *mailbox, void __iomem *reg_bar0)
 	if (err)
 		dev_err(&mailbox->pdev->dev, "Failed to reset in mailbox mode\n");
 
+	cancel_delayed_work_sync(&mailbox->gve_mbx_task);
+	if (mailbox->gve_mbx_wq) {
+		destroy_workqueue(mailbox->gve_mbx_wq);
+		mailbox->gve_mbx_wq = NULL;
+	}
+
 	gve_free_mbx_msg_queue(mailbox);
 	gve_free_mbx_rcv_buffers(mailbox);
 	kfree(mailbox->mbx_tx_bufs);
@@ -622,9 +641,19 @@ static int gve_alloc_mailbox(struct gve_mailbox *mailbox)
 	if (err)
 		goto free_mbx_rcv_bufs;
 
+	mailbox->gve_mbx_wq = alloc_workqueue("gve-mbx", 0, 0);
+	if (!mailbox->gve_mbx_wq) {
+		err = -ENOMEM;
+		dev_err(&mailbox->pdev->dev,
+			"Failed to allocate mailbox workqueue\n");
+		goto free_mbx_msg_queue;
+	}
+
 	gve_post_initial_rx_bufs(mailbox);
 	return 0;
 
+free_mbx_msg_queue:
+	gve_free_mbx_msg_queue(mailbox);
 free_mbx_rcv_bufs:
 	gve_free_mbx_rcv_buffers(mailbox);
 free_mbx_tx_bufs:
@@ -692,5 +721,8 @@ int gve_initialize_mbx(struct gve_mailbox *mailbox, void __iomem *reg_bar0)
 	/* Init the mailbox queues */
 	gve_mbx_reg_init(mailbox->mbx_tx, reg_bar0);
 	gve_mbx_reg_init(mailbox->mbx_rx, reg_bar0);
+
+	INIT_DELAYED_WORK(&mailbox->gve_mbx_task, gve_mbx_task);
+	queue_delayed_work(mailbox->gve_mbx_wq, &mailbox->gve_mbx_task, 0);
 	return 0;
 }
