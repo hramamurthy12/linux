@@ -22,6 +22,7 @@
 
 #include "gve_desc.h"
 #include "gve_desc_dqo.h"
+#include "gve_mailbox.h"
 
 #ifndef PCI_VENDOR_ID_GOOGLE
 #define PCI_VENDOR_ID_GOOGLE	0x1ae0
@@ -825,6 +826,13 @@ struct gve_device_info {
 	bool cache_rss_config;
 };
 
+struct gve_mailbox {
+	struct pci_dev *pdev;
+	struct gve_priv *priv;
+	struct gve_mbx_queue *mbx_rx;
+	struct gve_mbx_queue *mbx_tx;
+};
+
 /**
  * struct gve_ctrl_ops - Control plane operations structure
  * @map_db_bar: Maps the doorbell BAR for the device and store in @priv.
@@ -945,6 +953,7 @@ struct gve_priv {
 
 	/* Mailbox Queue */
 	bool mailbox_mode;
+	struct gve_mailbox *mailbox;
 
 	/* Global stats */
 	u32 interface_up_cnt; /* count of times interface turned up since last reset */

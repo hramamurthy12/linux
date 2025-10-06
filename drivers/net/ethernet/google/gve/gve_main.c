@@ -26,6 +26,7 @@
 #include "gve_adminq.h"
 #include "gve_register.h"
 #include "gve_utils.h"
+#include "gve_mailbox.h"
 
 #define GVE_DEFAULT_RX_COPYBREAK	(256)
 
@@ -706,7 +707,11 @@ static void gve_teardown_device(struct gve_priv *priv)
 {
 	gve_teardown_notify_blocks(priv);
 	gve_teardown_control_plane_resources(priv);
-	gve_adminq_free(priv);
+
+	if (priv->mailbox_mode)
+		gve_free_mailbox(priv->mailbox, priv->reg_bar0);
+	else
+		gve_adminq_free(priv);
 	/*
 	 * Free any resources shared with the device only after we have a
 	 * guarantee that the device will not try to access such resources.
@@ -2499,10 +2504,13 @@ static int gve_recover(struct gve_priv *priv, bool setup_queues)
 {
 	int err;
 
-	err = gve_adminq_init(priv);
+	if (priv->mailbox_mode)
+		err = gve_initialize_mbx(priv->mailbox, priv->reg_bar0);
+	else
+		err = gve_adminq_init(priv);
 	if (err) {
 		dev_err(&priv->pdev->dev,
-			"Failed to alloc admin queue: err=%d\n", err);
+			"Failed to alloc control queue: err=%d\n", err);
 		goto err;
 	}
 
@@ -2777,6 +2785,7 @@ static int gve_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	int max_tx_queues, max_rx_queues;
 	struct net_device *dev;
 	struct gve_registers __iomem *reg_bar;
+	struct gve_mailbox *mailbox;
 	bool mailbox_mode = false;
 	struct gve_priv *priv;
 	int err;
@@ -2805,6 +2814,21 @@ static int gve_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 
 	mailbox_mode = gve_check_mailbox_mode(pdev);
+	if (mailbox_mode) {
+		mailbox = kzalloc(sizeof(*mailbox), GFP_KERNEL);
+		if (!mailbox) {
+			err = -ENOMEM;
+			goto abort_with_pci_region;
+		}
+
+		mailbox->pdev = pdev;
+		err = gve_initialize_mbx(mailbox, reg_bar);
+		if (err) {
+			dev_err(&pdev->dev,
+				"Failed to initialize mailbox queues\n");
+			goto abort_with_reg_bar;
+		}
+	}
 
 	/* Get max queues to alloc etherdev */
 	max_tx_queues = ioread32be(&reg_bar->max_tx_queues);
@@ -2852,6 +2876,8 @@ static int gve_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	priv->rx_cfg.packet_buffer_size = GVE_DEFAULT_RX_BUFFER_SIZE;
 	priv->max_rx_buffer_size = GVE_DEFAULT_RX_BUFFER_SIZE;
 	priv->mailbox_mode = mailbox_mode;
+	priv->mailbox = mailbox;
+	mailbox->priv = priv;
 
 	err = gve_adminq_init(priv);
 	if (err) {
@@ -2929,6 +2955,10 @@ abort_with_netdev:
 	free_netdev(dev);
 
 abort_with_reg_bar:
+	if (mailbox_mode) {
+		gve_free_mailbox(mailbox, reg_bar);
+		kfree(mailbox);
+	}
 	pci_iounmap(pdev, reg_bar);
 
 abort_with_pci_region:
@@ -2948,6 +2978,8 @@ static void gve_remove(struct pci_dev *pdev)
 	unregister_netdev(netdev);
 	destroy_workqueue(priv->gve_wq);
 	gve_teardown_device(priv);
+	if (priv->mailbox)
+		kfree(priv->mailbox);
 	priv->ctrl_ops->unmap_db_bar(priv);
 	free_netdev(netdev);
 	pci_iounmap(pdev, reg_bar);
