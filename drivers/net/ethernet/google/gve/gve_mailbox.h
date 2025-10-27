@@ -182,6 +182,54 @@ struct gve_mbx_caps_resp {
 	__le16 hash_lut_size;
 };
 
+/**
+ * struct gve_mbx_get_interrupt_dbs_req - request for GET_INTERRUPT_DBS
+ *
+ * Request for getting MSI-X vectors and doorbell registers from device.
+ *
+ * @start_msix_index: first MSI-X index to retrieve info for.
+ * @num_vecs: number of interrupt vectors to retrieve info for.
+ */
+struct gve_mbx_get_interrupt_dbs_req {
+	__le16 start_msix_index;
+	__le16 num_vecs;
+};
+static_assert(sizeof(struct gve_mbx_get_interrupt_dbs_req) == 4);
+
+/**
+ * struct gve_mbx_interrupt_db_info - irq and coalescing doorbell information.
+ *
+ * @irq_db_offset: Offset in bytes from db_bar for this vector's IRQ doorbell
+ *	register
+ * @irq_coalesc_db_offset: Offset in bytes from db_bar for this vector's
+ *	coalescing doorbell register
+ */
+struct gve_mbx_interrupt_db_info {
+	__le32 irq_db_offset;
+	__le32 irq_coalesce_db_offset;
+};
+static_assert(sizeof(struct gve_mbx_interrupt_db_info) == 8);
+
+/**
+ * struct gve_mbx_get_interrupt_dbs_resp - response to GET_INTERRUPT_DBS
+ * request.
+ *
+ * There is a 1:1:1 mapping between MSI-X vector, IRQ doorbell, and IRQ
+ * coalescing doorbell.
+ *
+ * @start_msix_index: First MSI-X vector for which to get the doorbell
+ *	registers for.
+ * @num_vecs: Number of vectors in following payload.
+ * @info: Array of interrupt doorbell info, starting at @start_msix_index, with
+ *	@num_vecs elements.
+ */
+struct gve_mbx_get_interrupt_dbs_resp {
+	__le16 start_msix_index;
+	__le16 num_vecs;
+	struct gve_mbx_interrupt_db_info info[];
+};
+
+
 struct gve_mbx_desc {
 	__le16 flags;			/* DD bit, extra payload etc */
 	__le16 destination;		/* send to CP/HMA 0x0801 */
