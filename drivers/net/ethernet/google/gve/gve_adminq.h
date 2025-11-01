@@ -467,18 +467,6 @@ enum gve_l4_type {
 	GVE_L4_TYPE_SCTP,
 };
 
-/* These are control path types for PTYPE which are the same as the data path
- * types.
- */
-struct gve_ptype_entry {
-	u8 l3_type;
-	u8 l4_type;
-};
-
-struct gve_ptype_map {
-	struct gve_ptype_entry ptypes[GVE_NUM_PTYPES]; /* PTYPES are always 10 bits. */
-};
-
 struct gve_adminq_get_ptype_map {
 	__be64 ptype_map_len;
 	__be64 ptype_map_addr;

@@ -319,6 +319,17 @@ int gve_mbx_request_db_info(struct gve_priv *priv)
 	return 0;
 }
 
+int gve_mbx_get_ptype_map(struct gve_priv *priv)
+{
+	int err = gve_send_mbx_msg_wait(priv->mailbox, GVE_MBX_GET_PTYPE_MAP, 0,
+					NULL);
+	if (err)
+		dev_err(&priv->pdev->dev,
+			"Failed to send get ptype map message.");
+
+	return err;
+}
+
 static void gve_post_rx_buffs(struct gve_mailbox *mailbox)
 {
 	struct gve_mbx_queue *mbx_rx = mailbox->mbx_rx;
@@ -492,6 +503,15 @@ static void gve_mbx_process_interrupt_dbs(struct gve_mailbox *mailbox,
 		db_resp->start_msix_index + db_resp->num_vecs;
 }
 
+static int gve_mbx_process_ptype_map(struct gve_mailbox *mailbox,
+				     struct gve_dma_mem *recv_msg)
+{
+	struct gve_ptype_lut *ptype_map = recv_msg->va;
+
+	memcpy(mailbox->priv->ptype_lut_dqo, ptype_map, sizeof(*ptype_map));
+	return 0;
+}
+
 static int gve_process_mbx_msg(struct gve_mailbox *mailbox, u32 opcode,
 			       struct gve_dma_mem *recv_msg)
 {
@@ -503,6 +523,9 @@ static int gve_process_mbx_msg(struct gve_mailbox *mailbox, u32 opcode,
 		break;
 	case GVE_MBX_GET_INTERRUPT_DBS:
 		gve_mbx_process_interrupt_dbs(mailbox, recv_msg);
+		break;
+	case GVE_MBX_GET_PTYPE_MAP:
+		err = gve_mbx_process_ptype_map(mailbox, recv_msg);
 		break;
 	default:
 		err = -EBADMSG;

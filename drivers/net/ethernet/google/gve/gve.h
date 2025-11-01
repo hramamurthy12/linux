@@ -146,6 +146,18 @@ struct gve_rx_data_queue {
 
 struct gve_priv;
 
+/* These are control path types for PTYPE which are the same as the data path
+ * types.
+ */
+struct gve_ptype_entry {
+	u8 l3_type;
+	u8 l4_type;
+};
+
+struct gve_ptype_map {
+	struct gve_ptype_entry ptypes[GVE_NUM_PTYPES]; /* PTYPES are always 10 bits. */
+};
+
 /* RX buffer queue for posting buffers to HW.
  * Each RX (completion) queue has a corresponding buffer queue.
  */
