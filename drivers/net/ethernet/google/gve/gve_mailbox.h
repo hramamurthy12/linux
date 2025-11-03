@@ -118,6 +118,7 @@ struct gve_mbx_msg {
 
 enum gve_mbx_opcode {
 	GVE_MBX_NEGOTIATE_CAPABILITIES	= 0x6001,
+	GVE_MBX_GET_INTERRUPT_DBS	= 0x6005,
 };
 
 enum gve_mbx_caps {
@@ -252,6 +253,7 @@ int gve_mbx_set_num_ntfy_blks(struct gve_priv *priv);
 void gve_mbx_set_num_queues(struct gve_priv *priv);
 void gve_mbx_get_max_queues(struct gve_mailbox *mailbox, int *max_tx_queues,
 			    int *max_rx_queues);
+int gve_mbx_request_db_info(struct gve_priv *priv);
 int gve_mbx_negotiate_caps(struct gve_mailbox *mailbox);
 void gve_mbx_task(struct work_struct *work);
 int gve_send_mbx_msg_wait(struct gve_mailbox *mailbox, u32 opcode, u16 msg_size,

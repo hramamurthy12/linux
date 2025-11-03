@@ -667,7 +667,12 @@ struct gve_tx_ring {
  * associated with that irq.
  */
 struct gve_notify_block {
-	__be32 *irq_db_index; /* pointer to idx into Bar2 */
+	union {
+		__be32 *aq_irq_db_index; /* pointer to idx into Bar2 */
+		struct gve_mbx_interrupt_db_info mbx_db_info;
+	}; /* doorbell info */
+
+	void __iomem *irq_db;
 	char name[IFNAMSIZ + 16]; /* name registered with the kernel */
 	struct napi_struct napi; /* kernel napi struct for this block */
 	struct gve_priv *priv;
@@ -895,6 +900,7 @@ struct gve_priv {
 	struct gve_irq_db *irq_db_indices; /* array of num_ntfy_blks */
 	dma_addr_t irq_db_indices_bus;
 	struct msix_entry *msix_vectors; /* array of num_ntfy_blks + 1 */
+	int next_msix_vec;
 	char mgmt_msix_name[IFNAMSIZ + 16];
 	u32 mgmt_msix_idx;
 	__be32 *counter_array; /* array of num_event_counters */
@@ -1182,10 +1188,9 @@ static inline void gve_clear_report_stats(struct gve_priv *priv)
 
 /* Returns the address of the ntfy_blocks irq doorbell
  */
-static inline __be32 __iomem *gve_irq_doorbell(struct gve_priv *priv,
-					       struct gve_notify_block *block)
+static inline void __iomem *gve_irq_doorbell(struct gve_notify_block *block)
 {
-	return &priv->db_bar2[be32_to_cpu(*block->irq_db_index)];
+	return block->irq_db;
 }
 
 /* Returns the index into ntfy_blocks of the given tx ring's block
@@ -1202,9 +1207,21 @@ static inline u32 gve_rx_idx_to_ntfy(struct gve_priv *priv, u32 queue_idx)
 	return (priv->num_ntfy_blks / 2) + queue_idx;
 }
 
+/* In mailbox mode, the first MSI-X vector is reserved for the mailbox
+ * IRQ vector, so data queue MSI-X vectors start at index 1.
+ */
+static inline u32 gve_msix_idx_to_ntfy(struct gve_priv *priv, u32 msix_idx)
+{
+	int base = (priv->mailbox_mode) ? 1 : 0;
+
+	return msix_idx - base;
+}
+
 static inline u32 gve_ntfy_to_msix_idx(struct gve_priv *priv, u32 ntfy_blk_idx)
 {
-	return ntfy_blk_idx;
+	int base = (priv->mailbox_mode) ? 1 : 0;
+
+	return base + ntfy_blk_idx;
 }
 
 static inline bool gve_is_qpl(struct gve_priv *priv)

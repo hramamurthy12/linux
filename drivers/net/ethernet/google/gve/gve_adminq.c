@@ -1780,7 +1780,7 @@ int gve_adminq_request_db_info(struct gve_priv *priv)
 	}
 
 	for (i = 0; i < priv->num_ntfy_blks; i++)
-		priv->ntfy_blocks[i].irq_db_index =
+		priv->ntfy_blocks[i].aq_irq_db_index =
 			&priv->irq_db_indices[i].index;
 	return 0;
 

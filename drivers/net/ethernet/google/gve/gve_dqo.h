@@ -95,9 +95,7 @@ static inline void
 gve_write_irq_doorbell_dqo(const struct gve_priv *priv,
 			   const struct gve_notify_block *block, u32 val)
 {
-	u32 index = be32_to_cpu(*block->irq_db_index);
-
-	iowrite32(val, &priv->db_bar2[index]);
+	iowrite32(val, block->irq_db);
 }
 
 /* Sets interrupt throttling interval and enables interrupt

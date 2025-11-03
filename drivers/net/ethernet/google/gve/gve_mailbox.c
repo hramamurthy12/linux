@@ -269,6 +269,56 @@ int gve_mbx_negotiate_caps(struct gve_mailbox *mailbox)
 	return 0;
 }
 
+static int gve_mbx_get_interrupt_dbs(struct gve_mailbox *mailbox,
+				     struct gve_mbx_get_interrupt_dbs_req *request)
+{
+	int err;
+
+	err = gve_send_mbx_msg_wait(mailbox, GVE_MBX_GET_INTERRUPT_DBS,
+				    sizeof(*request), (u8 *)request);
+	if (err)
+		dev_err(&mailbox->pdev->dev,
+			"Failed to send get interrupt doorbells message.");
+
+	return err;
+
+}
+
+int gve_mbx_request_db_info(struct gve_priv *priv)
+{
+	int db_infos_per_response, remain_db_infos;
+	struct gve_mailbox *mailbox = priv->mailbox;
+	// TODO: validate that his actually needs to be num_tfy_blks
+	int start_msix_idx = 1;
+
+	/* Compute the maximum number of response items */
+	db_infos_per_response = GVE_MBX_BUF_SIZE;
+	db_infos_per_response -= sizeof(struct gve_mbx_get_interrupt_dbs_resp);
+	db_infos_per_response /= sizeof(struct gve_mbx_interrupt_db_info);
+
+	remain_db_infos = priv->num_ntfy_blks;
+	priv->next_msix_vec = start_msix_idx;
+	do {
+		struct gve_mbx_get_interrupt_dbs_req req;
+		int err;
+
+		req.num_vecs = min_t(int, remain_db_infos,
+				     db_infos_per_response);
+		req.start_msix_index = priv->next_msix_vec;
+		err = gve_mbx_get_interrupt_dbs(mailbox, &req);
+		if (err)
+			return err;
+
+		/* mailbox->last_received_msix_vec is updated synchronously as
+		 * part of mailbox RX processing
+		 */
+		remain_db_infos = (priv->num_ntfy_blks + start_msix_idx) -
+			priv->next_msix_vec;
+	} while (remain_db_infos);
+
+	return 0;
+}
+
 static void gve_post_rx_buffs(struct gve_mailbox *mailbox)
 {
 	struct gve_mbx_queue *mbx_rx = mailbox->mbx_rx;
@@ -416,6 +466,32 @@ static int gve_mbx_fill_device_properties(struct gve_mailbox *mailbox,
 	return 0;
 }
 
+static void gve_mbx_process_interrupt_dbs(struct gve_mailbox *mailbox,
+					  struct gve_dma_mem *recv_msg)
+{
+	struct gve_mbx_get_interrupt_dbs_resp *db_resp = recv_msg->va;
+	struct gve_priv *priv = mailbox->priv;
+	int i;
+
+	/* Populate notify blocks */
+	for (i = 0; i < db_resp->num_vecs; i++) {
+		int msix_index = db_resp->start_msix_index + i;
+		struct gve_notify_block *block;
+		int notify_index;
+
+		if (msix_index == 0 || msix_index > priv->num_ntfy_blks)
+			continue;
+
+		notify_index = gve_msix_idx_to_ntfy(priv, msix_index);
+		block = &priv->ntfy_blocks[notify_index];
+		memcpy(&block->mbx_db_info, &db_resp->info[i],
+		       sizeof(struct gve_mbx_interrupt_db_info));
+	}
+
+	priv->next_msix_vec =
+		db_resp->start_msix_index + db_resp->num_vecs;
+}
+
 static int gve_process_mbx_msg(struct gve_mailbox *mailbox, u32 opcode,
 			       struct gve_dma_mem *recv_msg)
 {
@@ -424,6 +500,9 @@ static int gve_process_mbx_msg(struct gve_mailbox *mailbox, u32 opcode,
 	switch (opcode) {
 	case GVE_MBX_NEGOTIATE_CAPABILITIES:
 		err = gve_mbx_fill_device_properties(mailbox, recv_msg);
+		break;
+	case GVE_MBX_GET_INTERRUPT_DBS:
+		gve_mbx_process_interrupt_dbs(mailbox, recv_msg);
 		break;
 	default:
 		err = -EBADMSG;

@@ -270,9 +270,8 @@ static void gve_free_stats_report(struct gve_priv *priv)
 static irqreturn_t gve_intr(int irq, void *arg)
 {
 	struct gve_notify_block *block = arg;
-	struct gve_priv *priv = block->priv;
 
-	iowrite32be(GVE_IRQ_MASK, gve_irq_doorbell(priv, block));
+	iowrite32be(GVE_IRQ_MASK, gve_irq_doorbell(block));
 	napi_schedule_irqoff(&block->napi);
 	return IRQ_HANDLED;
 }
@@ -337,7 +336,7 @@ int gve_napi_poll(struct napi_struct *napi, int budget)
 
        /* Complete processing - don't unmask irq if busy polling is enabled */
 	if (likely(napi_complete_done(napi, work_done))) {
-		irq_doorbell = gve_irq_doorbell(priv, block);
+		irq_doorbell = gve_irq_doorbell(block);
 		iowrite32be(GVE_IRQ_ACK | GVE_IRQ_EVENT, irq_doorbell);
 
 		/* Ensure IRQ ACK is visible before we check pending work.
@@ -461,7 +460,6 @@ static int gve_alloc_notify_blocks(struct gve_priv *priv)
 		int vecs_left = new_num_ntfy_blks % 2;
 
 		priv->num_ntfy_blks = new_num_ntfy_blks;
-		priv->mgmt_msix_idx = priv->num_ntfy_blks;
 		priv->tx_cfg.max_queues = min_t(int, priv->tx_cfg.max_queues,
 						vecs_per_type);
 		priv->rx_cfg.max_queues = min_t(int, priv->rx_cfg.max_queues,
@@ -474,6 +472,8 @@ static int gve_alloc_notify_blocks(struct gve_priv *priv)
 			priv->tx_cfg.num_queues = priv->tx_cfg.max_queues;
 		if (priv->rx_cfg.num_queues > priv->rx_cfg.max_queues)
 			priv->rx_cfg.num_queues = priv->rx_cfg.max_queues;
+		if (priv->mgmt_msix_idx > priv->num_ntfy_blks)
+			priv->mgmt_msix_idx = priv->num_ntfy_blks;
 	}
 
 	priv->ntfy_blocks = kvzalloc(priv->num_ntfy_blks *
@@ -514,6 +514,24 @@ static void gve_teardown_notify_blocks(struct gve_priv *priv)
 	ops->teardown_mgmt_irq(priv);
 }
 
+static void gve_init_irq_doorbells(struct gve_priv *priv)
+{
+	int i;
+
+	for (i = 0; i < priv->num_ntfy_blks; i++) {
+		struct gve_notify_block *block = &priv->ntfy_blocks[i];
+
+		if (priv->mailbox_mode) {
+			u32 db_offset =
+				le32_to_cpu(block->mbx_db_info.irq_db_offset);
+			block->irq_db = (u8 __iomem *)priv->reg_bar0 + db_offset;
+		} else {
+			u32 db_idx = be32_to_cpu(*block->aq_irq_db_index);
+			block->irq_db = &priv->db_bar2[db_idx];
+		}
+	}
+}
+
 static int gve_setup_notify_blocks(struct gve_priv *priv)
 {
 	const struct gve_ctrl_ops *ops = priv->ctrl_ops;
@@ -521,6 +539,8 @@ static int gve_setup_notify_blocks(struct gve_priv *priv)
 	unsigned int cur_cpu;
 	int i;
 	int err;
+
+	gve_init_irq_doorbells(priv);
 
 	/* Setup Management Vector */
 	err = ops->setup_mgmt_irq(priv);
@@ -1927,7 +1947,7 @@ static void gve_turnup(struct gve_priv *priv)
 					     &block->napi);
 
 		if (gve_is_gqi(priv)) {
-			iowrite32be(0, gve_irq_doorbell(priv, block));
+			iowrite32be(0, gve_irq_doorbell(block));
 		} else {
 			gve_set_itr_coalesce_usecs_dqo(priv, block,
 						       priv->tx_coalesce_usecs);
@@ -1952,7 +1972,7 @@ static void gve_turnup(struct gve_priv *priv)
 				     &block->napi);
 
 		if (gve_is_gqi(priv)) {
-			iowrite32be(0, gve_irq_doorbell(priv, block));
+			iowrite32be(0, gve_irq_doorbell(block));
 		} else {
 			gve_set_itr_coalesce_usecs_dqo(priv, block,
 						       priv->rx_coalesce_usecs);
@@ -2424,6 +2444,7 @@ static const struct gve_ctrl_ops gve_mbx_ops = {
 	.set_num_ntfy_blks	= gve_mbx_set_num_ntfy_blks,
 	.setup_stats_report	= gve_mbx_setup_stats_report,
 	.free_db_resources	= gve_mbx_free_db_resources,
+	.request_db_info	= gve_mbx_request_db_info,
 };
 
 static const struct gve_ctrl_ops gve_adminq_ops = {
