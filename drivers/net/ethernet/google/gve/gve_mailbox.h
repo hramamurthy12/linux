@@ -121,6 +121,7 @@ enum gve_mbx_opcode {
 	GVE_MBX_NEGOTIATE_CAPABILITIES	= 0x6001,
 	GVE_MBX_GET_INTERRUPT_DBS	= 0x6005,
 	GVE_MBX_GET_PTYPE_MAP		= 0x6006,
+	GVE_MBX_REPORT_LINK_STATUS	= 0x6007,
 	GVE_MBX_CONFIG_TX_QUEUES	= 0x6008,
 	GVE_MBX_CONFIG_RX_QUEUES        = 0x6009,
 	GVE_MBX_ENABLE_TX_QUEUES        = 0x600c,
@@ -191,6 +192,19 @@ struct gve_mbx_caps_resp {
 	__le16 hash_key_size;
 	__le16 hash_lut_size;
 };
+
+/**
+ * struct gve_mbx_report_link_status_resp - response for REPORT_LINK_STATUS
+ *
+ * Response for link status request containing the link speed and whether the
+ * link is up.
+ */
+struct gve_mbx_report_link_status_resp {
+	__le64 link_speed; /* in mbps */
+	u8 link_up;
+	u8 pad[7];
+};
+static_assert(sizeof(struct gve_mbx_report_link_status_resp) == 16);
 
 /**
  * struct gve_mbx_get_interrupt_dbs_req - request for GET_INTERRUPT_DBS
@@ -358,6 +372,7 @@ int gve_mbx_request_db_info(struct gve_priv *priv);
 int gve_mbx_setup_mgmt_irq(struct gve_priv *priv);
 void gve_mbx_teardown_mgmt_irq(struct gve_priv *priv);
 int gve_mbx_get_ptype_map(struct gve_priv *priv);
+int gve_mbx_report_link_status(struct gve_priv *priv);
 int gve_mbx_configure_rss(struct gve_priv *priv,
 			  struct ethtool_rxfh_param *rxfh);
 int gve_mbx_negotiate_caps(struct gve_mailbox *mailbox);

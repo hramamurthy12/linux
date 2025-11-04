@@ -2451,6 +2451,8 @@ static const struct gve_ctrl_ops gve_mbx_ops = {
 	.configure_rss		= gve_mbx_configure_rss,
 	.create_queues		= gve_mbx_config_queues,
 	.destroy_queues		= gve_mbx_disable_queues,
+	.report_link_status	= gve_mbx_report_link_status,
+	.report_link_speed	= gve_mbx_report_link_status,
 };
 
 static const struct gve_ctrl_ops gve_adminq_ops = {

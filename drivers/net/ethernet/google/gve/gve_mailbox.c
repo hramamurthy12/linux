@@ -728,6 +728,19 @@ err:
 	return err;
 }
 
+int gve_mbx_report_link_status(struct gve_priv *priv)
+{
+	int err;
+
+	err = gve_send_mbx_msg_wait(priv->mailbox, GVE_MBX_REPORT_LINK_STATUS,
+				    0, NULL);
+	if (err)
+		dev_err_ratelimited(&priv->pdev->dev,
+			"Failed to send report link status request");
+
+	return err;
+}
+
 static void gve_post_rx_buffs(struct gve_mailbox *mailbox)
 {
 	struct gve_mbx_queue *mbx_rx = mailbox->mbx_rx;
@@ -955,6 +968,17 @@ static int gve_mbx_process_config_rx_queues(struct gve_mailbox *mailbox,
 	return 0;
 }
 
+static int gve_mbx_process_link_status(struct gve_mailbox *mailbox,
+				       struct gve_dma_mem *recv_msg)
+{
+	struct gve_mbx_report_link_status_resp *resp = recv_msg->va;
+	struct gve_priv *priv = mailbox->priv;
+
+	priv->link_speed = le32_to_cpu(resp->link_speed);
+	priv->link_up = resp->link_up;
+	return 0;
+}
+
 static int gve_process_mbx_msg(struct gve_mailbox *mailbox, u32 opcode,
 			       struct gve_dma_mem *recv_msg)
 {
@@ -969,6 +993,9 @@ static int gve_process_mbx_msg(struct gve_mailbox *mailbox, u32 opcode,
 		break;
 	case GVE_MBX_GET_PTYPE_MAP:
 		err = gve_mbx_process_ptype_map(mailbox, recv_msg);
+		break;
+	case GVE_MBX_REPORT_LINK_STATUS:
+		err = gve_mbx_process_link_status(mailbox, recv_msg);
 		break;
 	case GVE_MBX_CONFIG_TX_QUEUES:
 		err = gve_mbx_process_config_tx_queues(mailbox, recv_msg);
