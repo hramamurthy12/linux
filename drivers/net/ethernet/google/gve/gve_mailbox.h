@@ -254,6 +254,8 @@ void gve_mbx_set_num_queues(struct gve_priv *priv);
 void gve_mbx_get_max_queues(struct gve_mailbox *mailbox, int *max_tx_queues,
 			    int *max_rx_queues);
 int gve_mbx_request_db_info(struct gve_priv *priv);
+int gve_mbx_setup_mgmt_irq(struct gve_priv *priv);
+void gve_mbx_teardown_mgmt_irq(struct gve_priv *priv);
 int gve_mbx_get_ptype_map(struct gve_priv *priv);
 int gve_mbx_negotiate_caps(struct gve_mailbox *mailbox);
 void gve_mbx_task(struct work_struct *work);

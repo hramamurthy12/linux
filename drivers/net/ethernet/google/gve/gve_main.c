@@ -2446,6 +2446,8 @@ static const struct gve_ctrl_ops gve_mbx_ops = {
 	.free_db_resources	= gve_mbx_free_db_resources,
 	.request_db_info	= gve_mbx_request_db_info,
 	.get_ptype_map		= gve_mbx_get_ptype_map,
+	.setup_mgmt_irq		= gve_mbx_setup_mgmt_irq,
+	.teardown_mgmt_irq	= gve_mbx_teardown_mgmt_irq,
 };
 
 static const struct gve_ctrl_ops gve_adminq_ops = {

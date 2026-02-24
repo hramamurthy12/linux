@@ -1059,11 +1059,28 @@ enum gve_state_flags_bit {
 	GVE_PRIV_FLAGS_DEVICE_RESOURCES_OK	= 2,
 	GVE_PRIV_FLAGS_DEVICE_RINGS_OK		= 3,
 	GVE_PRIV_FLAGS_NAPI_ENABLED		= 4,
+	GVE_PRIV_FLAGS_MAILBOX_INTERRUPT_OK	= 5,
 };
 
 enum gve_ethtool_flags_bit {
 	GVE_PRIV_FLAGS_REPORT_STATS		= 0,
 };
+
+static inline bool gve_get_mailbox_interrupt_ok(struct gve_priv *priv)
+{
+	return test_bit(GVE_PRIV_FLAGS_MAILBOX_INTERRUPT_OK,
+			&priv->state_flags);
+}
+
+static inline void gve_set_mailbox_interrupt_ok(struct gve_priv *priv)
+{
+	set_bit(GVE_PRIV_FLAGS_MAILBOX_INTERRUPT_OK, &priv->state_flags);
+}
+
+static inline void gve_clear_mailbox_interrupt_ok(struct gve_priv *priv)
+{
+	clear_bit(GVE_PRIV_FLAGS_MAILBOX_INTERRUPT_OK, &priv->state_flags);
+}
 
 static inline bool gve_get_do_reset(struct gve_priv *priv)
 {

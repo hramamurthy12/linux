@@ -7,6 +7,13 @@
 #include <linux/etherdevice.h>
 #include "gve.h"
 #include "gve_mailbox.h"
+#include "gve_dqo.h"
+
+static void gve_write_mbx_irq_db(struct gve_priv *priv, u32 val)
+{
+	iowrite32(val,
+		  (u8 *)priv->reg_bar0 + priv->device_info.mbx_irq_db_offset);
+}
 
 void gve_mbx_task(struct work_struct *work)
 {
@@ -15,7 +22,10 @@ void gve_mbx_task(struct work_struct *work)
 
 	mailbox = container_of(work, struct gve_mailbox, gve_mbx_task.work);
 
-	queue_delayed_work(mailbox->gve_mbx_wq, &mailbox->gve_mbx_task,
+	if (mailbox->priv && gve_get_mailbox_interrupt_ok(mailbox->priv))
+		gve_write_mbx_irq_db(mailbox->priv, GVE_ITR_ENABLE_BIT_DQO);
+	else
+		queue_delayed_work(mailbox->gve_mbx_wq, &mailbox->gve_mbx_task,
 			   usecs_to_jiffies(300));
 
 	err = gve_receive_mbx_msg(mailbox);
@@ -317,6 +327,57 @@ int gve_mbx_request_db_info(struct gve_priv *priv)
 	} while (remain_db_infos);
 
 	return 0;
+}
+
+static irqreturn_t gve_mbx_intr(int irq, void *arg)
+{
+	struct gve_priv *priv = arg;
+	struct gve_mailbox *mailbox;
+
+	mailbox = priv->mailbox;
+	queue_delayed_work(mailbox->gve_mbx_wq, &mailbox->gve_mbx_task, 0);
+	return IRQ_HANDLED;
+}
+
+int gve_mbx_setup_mgmt_irq(struct gve_priv *priv)
+{
+	struct gve_mailbox *mailbox = priv->mailbox;
+	int err;
+
+	snprintf(priv->mgmt_msix_name, sizeof(priv->mgmt_msix_name),
+		 "gve-mbx@pci:%s", pci_name(priv->pdev));
+	err = request_irq(priv->msix_vectors[priv->mgmt_msix_idx].vector,
+			  gve_mbx_intr, 0, priv->mgmt_msix_name, priv);
+	if (err) {
+		dev_err(&priv->pdev->dev,
+			"Did not receive mailbox vector.\n");
+		return err;
+	}
+
+	/* Cancel work queue to disable mbx polling. */
+	cancel_delayed_work_sync(&mailbox->gve_mbx_task);
+	gve_set_mailbox_interrupt_ok(priv);
+
+	/* Re-scheule work queue to implicitly re-enable interrupts. */
+	queue_delayed_work(mailbox->gve_mbx_wq, &mailbox->gve_mbx_task, 0);
+
+	return 0;
+}
+
+void gve_mbx_teardown_mgmt_irq(struct gve_priv *priv)
+{
+	struct gve_mailbox *mailbox = priv->mailbox;
+
+	if (!priv->msix_vectors)
+		return;
+
+	gve_clear_mailbox_interrupt_ok(priv);
+
+	free_irq(priv->msix_vectors[priv->mgmt_msix_idx].vector,
+		 priv);
+
+	/* Re-start mailbox polling. */
+	queue_delayed_work(mailbox->gve_mbx_wq, &mailbox->gve_mbx_task, 0);
 }
 
 int gve_mbx_get_ptype_map(struct gve_priv *priv)
