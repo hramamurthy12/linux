@@ -162,12 +162,17 @@ struct gve_ptype_map {
 struct gve_queue_resources {
 	union {
 		struct {
+			union {
 			__be32 db_index;	/* Device -> Guest */
+			__le32 mbx_db_index;
+			};
 			__be32 counter_index;	/* Device -> Guest */
 		};
 		u8 reserved[64];
 	};
 };
+
+static_assert(sizeof(struct gve_queue_resources) == 64);
 
 /* RX buffer queue for posting buffers to HW.
  * Each RX (completion) queue has a corresponding buffer queue.

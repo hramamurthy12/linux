@@ -435,6 +435,299 @@ free_request:
 	return err;
 }
 
+static int gve_mbx_config_tx_queues(struct gve_priv *priv, u32 start_id,
+				    u32 num_queues)
+{
+	struct gve_mbx_config_tx_q_req *config_tx_q_info;
+	int size, i = 0, err = 0;
+	u32 q_idx;
+
+	size = struct_size(config_tx_q_info, tx_queues, num_queues);
+
+	/* validate size */
+	if (size > GVE_MBX_BUF_SIZE)
+		return -ENOMEM;
+
+	config_tx_q_info = kzalloc(size, GFP_KERNEL);
+	if (!config_tx_q_info)
+		return -ENOMEM;
+
+	config_tx_q_info->num_queues = cpu_to_le16(num_queues);
+
+	for (q_idx = start_id; q_idx < start_id + num_queues; q_idx++, i++) {
+		u32 ntfy_idx = gve_tx_idx_to_ntfy(priv, q_idx);
+		struct gve_tx_ring *tx = &priv->tx[q_idx];
+		struct gve_mbx_tx_q_info *tx_q_info;
+
+		tx_q_info = &config_tx_q_info->tx_queues[i];
+
+		tx_q_info->queue_id = cpu_to_le32(q_idx);
+		tx_q_info->msix_index =
+			cpu_to_le16(gve_ntfy_to_msix_idx(priv, ntfy_idx));
+		tx_q_info->queue_page_list_id = GVE_RAW_ADDRESSING_QPL_ID;
+		tx_q_info->tx_ring_addr = cpu_to_le64(tx->bus);
+		tx_q_info->tx_comp_ring_addr =
+					cpu_to_le64(tx->complq_bus_dqo);
+		tx_q_info->tx_ring_size = cpu_to_le16(priv->tx_desc_cnt);
+		tx_q_info->tx_comp_ring_size = cpu_to_le16(priv->tx_desc_cnt);
+	}
+
+	err = gve_send_mbx_msg_wait(priv->mailbox, GVE_MBX_CONFIG_TX_QUEUES,
+				    size, (u8 *)config_tx_q_info);
+	if (err)
+		dev_err(&priv->pdev->dev,
+			"Failed to send config TX mbx message for index %d\n",
+			q_idx);
+
+	kfree(config_tx_q_info);
+	return err;
+}
+
+static int gve_mbx_config_rx_queues(struct gve_priv *priv, u32 num_queues)
+{
+	struct gve_mbx_config_rx_qs_req *config_rx_q_info;
+	int size, err = 0, i = 0;
+	u32 q_idx;
+
+	size = struct_size(config_rx_q_info, rx_queues, num_queues);
+
+	/* validate size */
+	if (size > GVE_MBX_BUF_SIZE)
+		return -ENOMEM;
+
+	config_rx_q_info = kzalloc(size, GFP_KERNEL);
+	if (!config_rx_q_info)
+		return -ENOMEM;
+
+	config_rx_q_info->num_queues = cpu_to_le16(num_queues);
+
+	for (q_idx = 0; q_idx < num_queues; q_idx++, i++) {
+		u32 ntfy_idx = gve_rx_idx_to_ntfy(priv, q_idx);
+		struct gve_rx_ring *rx = &priv->rx[q_idx];
+		struct gve_mbx_rx_q_info *rx_q_info;
+		struct gve_notify_block *block;
+		u32 flags = 0;
+
+		block = &priv->ntfy_blocks[ntfy_idx];
+		rx_q_info = &config_rx_q_info->rx_queues[i];
+
+		if (priv->dev->features & NETIF_F_LRO)
+			flags |= GVE_MBX_RX_QUEUE_ENABLE_RSC;
+
+		rx_q_info->queue_id = cpu_to_le32(q_idx);
+		rx_q_info->msix_index =
+			cpu_to_le16(gve_ntfy_to_msix_idx(priv, ntfy_idx));
+		rx_q_info->queue_page_list_id = GVE_RAW_ADDRESSING_QPL_ID;
+		rx_q_info->flags = cpu_to_le32(flags);
+		rx_q_info->rx_desc_ring_addr = cpu_to_le64(rx->dqo.complq.bus);
+		rx_q_info->rx_data_ring_addr = cpu_to_le64(rx->dqo.bufq.bus);
+		rx_q_info->rx_desc_ring_size = cpu_to_le16(priv->rx_desc_cnt);
+		rx_q_info->rx_data_ring_size = cpu_to_le16(priv->rx_desc_cnt);
+		rx_q_info->packet_buffer_size =
+			cpu_to_le16(rx->packet_buffer_size);
+		if (priv->header_split_enabled)
+			rx_q_info->header_buffer_size =
+				cpu_to_le16(priv->header_buf_size);
+	}
+
+	err = gve_send_mbx_msg_wait(priv->mailbox, GVE_MBX_CONFIG_RX_QUEUES,
+				    size, (u8 *)config_rx_q_info);
+	if (err)
+		dev_err(&priv->pdev->dev,
+			"Failed to send config RX mbx message for index %d\n",
+			q_idx);
+
+	kfree(config_rx_q_info);
+	return err;
+}
+
+static int gve_mbx_disable_tx_queues(struct gve_priv *priv, u16 *queues,
+				     u16 num_queues)
+{
+	struct gve_mbx_disable_qs_req *req;
+	size_t req_size;
+	int err;
+	int i;
+
+	req_size = struct_size(req, queue_id, num_queues);
+	req = kzalloc(req_size, GFP_KERNEL);
+
+	req->num_queues = num_queues;
+	for (i = 0; i < num_queues; i++)
+		req->queue_id[i] = cpu_to_le16(queues[i]);
+
+	err = gve_send_mbx_msg_wait(priv->mailbox, GVE_MBX_DISABLE_TX_QUEUES,
+				    req_size, (u8 *)req);
+	if (err)
+		dev_err(&priv->pdev->dev,
+			"Failed to send disable TX queues mbx message\n");
+
+	return err;
+}
+
+static int gve_mbx_disable_rx_queues(struct gve_priv *priv, u16 *queues,
+				     u16 num_queues)
+{
+	struct gve_mbx_disable_qs_req *req;
+	size_t req_size;
+	int err;
+	int i;
+
+	req_size = struct_size(req, queue_id, num_queues);
+	req = kzalloc(req_size, GFP_KERNEL);
+
+	req->num_queues = num_queues;
+	for (i = 0; i < num_queues; i++)
+		req->queue_id[i] = cpu_to_le16(queues[i]);
+
+	err = gve_send_mbx_msg_wait(priv->mailbox, GVE_MBX_DISABLE_RX_QUEUES,
+				    req_size, (u8 *)req);
+
+	if (err)
+		dev_err(&priv->pdev->dev,
+			"Failed to send disable RX queues mbx message\n");
+
+	return err;
+}
+
+int gve_mbx_disable_queues(struct gve_priv *priv)
+{
+	u16 *rx_queues = NULL, *tx_queues = NULL;
+	int err;
+	int i;
+
+	rx_queues = kzalloc(array_size(priv->rx_cfg.num_queues, sizeof(u16)),
+			    GFP_KERNEL);
+	if (!rx_queues)
+		return -ENOMEM;
+
+	for (i = 0; i < priv->rx_cfg.num_queues; i++)
+		rx_queues[i] = i;
+
+	err = gve_mbx_disable_rx_queues(priv, rx_queues,
+					priv->rx_cfg.num_queues);
+	if (err)
+		goto free_arrays;
+
+	tx_queues = kzalloc(array_size(gve_num_tx_queues(priv), sizeof(u16)),
+			    GFP_KERNEL);
+	if (!tx_queues) {
+		err = -ENOMEM;
+		goto free_arrays;
+	}
+
+	for (i = 0; i < gve_num_tx_queues(priv); i++)
+		tx_queues[i] = i;
+
+	err = gve_mbx_disable_tx_queues(priv, tx_queues,
+					gve_num_tx_queues(priv));
+
+free_arrays:
+	kfree(rx_queues);
+	kfree(tx_queues);
+	return err;
+}
+
+
+static int gve_mbx_enable_tx_queues(struct gve_priv *priv, u32 start_id,
+				    u32 num_queues)
+{
+	struct gve_mbx_enable_qs_req *enable_tx_q_info;
+	int size, err = 0, i = 0;
+	u32 q_idx;
+
+	size = struct_size(enable_tx_q_info, queue_id, num_queues);
+
+	/* validate size */
+	if (size > GVE_MBX_BUF_SIZE)
+		return -ENOMEM;
+
+	enable_tx_q_info = kzalloc(size, GFP_KERNEL);
+	if (!enable_tx_q_info)
+		return -ENOMEM;
+
+	enable_tx_q_info->num_queues = cpu_to_le16(num_queues);
+
+	for (q_idx = start_id; q_idx < start_id + num_queues; q_idx++, i++)
+		enable_tx_q_info->queue_id[i] = cpu_to_le16(q_idx);
+
+	err = gve_send_mbx_msg_wait(priv->mailbox, GVE_MBX_ENABLE_TX_QUEUES,
+				    size, (u8 *)enable_tx_q_info);
+
+	if (err)
+		dev_err(&priv->pdev->dev,
+			"Failed to send enable TX queues mbx message\n");
+
+	kfree(enable_tx_q_info);
+	return err;
+}
+
+static int gve_mbx_enable_rx_queues(struct gve_priv *priv, u32 num_queues)
+{
+	struct gve_mbx_enable_qs_req *enable_rx_q_info;
+	int size, err = 0, i = 0;
+	u32 q_idx;
+
+	size = struct_size(enable_rx_q_info, queue_id, num_queues);
+
+	/* validate size */
+	if (size > GVE_MBX_BUF_SIZE)
+		return -ENOMEM;
+
+	enable_rx_q_info = kzalloc(size, GFP_KERNEL);
+	if (!enable_rx_q_info)
+		return -ENOMEM;
+
+	enable_rx_q_info->num_queues = cpu_to_le16(num_queues);
+	for (q_idx = 0; q_idx < num_queues; q_idx++, i++)
+		enable_rx_q_info->queue_id[i] = cpu_to_le16(q_idx);
+
+	err = gve_send_mbx_msg_wait(priv->mailbox, GVE_MBX_ENABLE_RX_QUEUES,
+				    size, (u8 *)enable_rx_q_info);
+
+	if (err)
+		dev_err(&priv->pdev->dev,
+			"Failed to send enable RX queues mbx message\n");
+
+	kfree(enable_rx_q_info);
+	return err;
+}
+
+int gve_mbx_config_queues(struct gve_priv *priv)
+{
+	int num_tx_queues = gve_num_tx_queues(priv);
+	int err;
+	int i;
+
+	err = gve_mbx_config_tx_queues(priv, 0, num_tx_queues);
+	if (err) {
+		goto err;
+	}
+
+	err = gve_mbx_config_rx_queues(priv, priv->rx_cfg.num_queues);
+	if (err)
+		goto err;
+
+	/* Clear Q doorbells to avoid unintended behavior */
+	for (i = 0; i < priv->rx_cfg.num_queues; i++)
+		iowrite32(0, priv->rx[i].q_db);
+
+	for (i = 0; i < num_tx_queues; i++)
+		iowrite32(0, priv->tx[i].q_db);
+
+	/* RX queues have to be enabled first */
+	err = gve_mbx_enable_rx_queues(priv, priv->rx_cfg.num_queues);
+	if (err)
+		goto err;
+
+	err = gve_mbx_enable_tx_queues(priv, 0, num_tx_queues);
+	if (err)
+		goto err;
+
+err:
+	return err;
+}
+
 static void gve_post_rx_buffs(struct gve_mailbox *mailbox)
 {
 	struct gve_mbx_queue *mbx_rx = mailbox->mbx_rx;
@@ -617,6 +910,51 @@ static int gve_mbx_process_ptype_map(struct gve_mailbox *mailbox,
 	return 0;
 }
 
+static int gve_mbx_process_config_tx_queues(struct gve_mailbox *mailbox,
+					    struct gve_dma_mem *recv_msg)
+{
+	struct gve_mbx_config_tx_qs_resp *tx_q_info = recv_msg->va;
+	struct gve_priv *priv = mailbox->priv;
+	int i;
+
+	/* Populate notify blocks */
+	for (i = 0; i < tx_q_info->num_queues; i++) {
+		u32 q_idx = le32_to_cpu(tx_q_info->queues[i].queue_id);
+		struct gve_tx_ring *tx_ring = &priv->tx[q_idx];
+		u32 db_offset;
+
+		if (!tx_ring)
+			return -EINVAL;
+
+		db_offset = le32_to_cpu(tx_q_info->queues[i].tail_db_offset);
+		tx_ring->q_resources->mbx_db_index = cpu_to_le32(db_offset);
+		tx_ring->q_db = (u8 __iomem *)priv->reg_bar0 + db_offset;
+	}
+	return 0;
+}
+static int gve_mbx_process_config_rx_queues(struct gve_mailbox *mailbox,
+					    struct gve_dma_mem *recv_msg)
+{
+	struct gve_mbx_config_rx_qs_resp *rx_q_info = recv_msg->va;
+	struct gve_priv *priv = mailbox->priv;
+	int i;
+
+	/* Populate notify blocks */
+	for (i = 0; i < rx_q_info->num_queues; i++) {
+		u32 q_idx = le32_to_cpu(rx_q_info->queues[i].queue_id);
+		struct gve_rx_ring *rx_ring = &priv->rx[q_idx];
+		u32 db_offset;
+
+		if (!rx_ring)
+			return -EINVAL;
+
+		db_offset = le32_to_cpu(rx_q_info->queues[i].tail_db_offset);
+		rx_ring->q_resources->mbx_db_index = cpu_to_le32(db_offset);
+		rx_ring->q_db = (u8 __iomem *)priv->reg_bar0 + db_offset;
+	}
+	return 0;
+}
+
 static int gve_process_mbx_msg(struct gve_mailbox *mailbox, u32 opcode,
 			       struct gve_dma_mem *recv_msg)
 {
@@ -631,6 +969,20 @@ static int gve_process_mbx_msg(struct gve_mailbox *mailbox, u32 opcode,
 		break;
 	case GVE_MBX_GET_PTYPE_MAP:
 		err = gve_mbx_process_ptype_map(mailbox, recv_msg);
+		break;
+	case GVE_MBX_CONFIG_TX_QUEUES:
+		err = gve_mbx_process_config_tx_queues(mailbox, recv_msg);
+		break;
+	case GVE_MBX_CONFIG_RX_QUEUES:
+		err = gve_mbx_process_config_rx_queues(mailbox, recv_msg);
+		break;
+	case GVE_MBX_ENABLE_TX_QUEUES:
+		break;
+	case GVE_MBX_ENABLE_RX_QUEUES:
+		break;
+	case GVE_MBX_DISABLE_TX_QUEUES:
+		break;
+	case GVE_MBX_DISABLE_RX_QUEUES:
 		break;
 	case GVE_MBX_CONFIGURE_RSS:
 		/* No processing needed. */

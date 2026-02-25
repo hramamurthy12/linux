@@ -352,6 +352,8 @@ int gve_mbx_set_num_ntfy_blks(struct gve_priv *priv);
 void gve_mbx_set_num_queues(struct gve_priv *priv);
 void gve_mbx_get_max_queues(struct gve_mailbox *mailbox, int *max_tx_queues,
 			    int *max_rx_queues);
+int gve_mbx_disable_queues(struct gve_priv *priv);
+int gve_mbx_config_queues(struct gve_priv *priv);
 int gve_mbx_request_db_info(struct gve_priv *priv);
 int gve_mbx_setup_mgmt_irq(struct gve_priv *priv);
 void gve_mbx_teardown_mgmt_irq(struct gve_priv *priv);

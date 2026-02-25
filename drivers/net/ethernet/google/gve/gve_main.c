@@ -2449,6 +2449,8 @@ static const struct gve_ctrl_ops gve_mbx_ops = {
 	.setup_mgmt_irq		= gve_mbx_setup_mgmt_irq,
 	.teardown_mgmt_irq	= gve_mbx_teardown_mgmt_irq,
 	.configure_rss		= gve_mbx_configure_rss,
+	.create_queues		= gve_mbx_config_queues,
+	.destroy_queues		= gve_mbx_disable_queues,
 };
 
 static const struct gve_ctrl_ops gve_adminq_ops = {
