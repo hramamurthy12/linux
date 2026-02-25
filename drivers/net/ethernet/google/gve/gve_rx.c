@@ -429,9 +429,7 @@ void gve_rx_free_rings_gqi(struct gve_priv *priv,
 
 void gve_rx_write_doorbell(struct gve_priv *priv, struct gve_rx_ring *rx)
 {
-	u32 db_idx = be32_to_cpu(rx->q_resources->db_index);
-
-	iowrite32be(rx->fill_cnt, &priv->db_bar2[db_idx]);
+	iowrite32be(rx->fill_cnt, rx->q_db);
 }
 
 static enum pkt_hash_types gve_rss_type(__be16 pkt_flags)

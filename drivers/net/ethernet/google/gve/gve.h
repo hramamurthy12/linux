@@ -158,6 +158,17 @@ struct gve_ptype_map {
 	struct gve_ptype_entry ptypes[GVE_NUM_PTYPES]; /* PTYPES are always 10 bits. */
 };
 
+/* Queue resources that are shared with the device */
+struct gve_queue_resources {
+	union {
+		struct {
+			__be32 db_index;	/* Device -> Guest */
+			__be32 counter_index;	/* Device -> Guest */
+		};
+		u8 reserved[64];
+	};
+};
+
 /* RX buffer queue for posting buffers to HW.
  * Each RX (completion) queue has a corresponding buffer queue.
  */
@@ -254,6 +265,7 @@ struct gve_rx_cnts {
 /* Contains datapath state used to represent an RX queue. */
 struct gve_rx_ring {
 	struct gve_priv *gve;
+	void __iomem *q_db;
 
 	u16 packet_buffer_size;		/* Size of buffer posted to NIC */
 	u16 packet_buffer_truesize;	/* Total size of RX buffer */
@@ -484,6 +496,7 @@ struct gve_tx_pending_packet_dqo {
 /* Contains datapath state used to represent a TX queue. */
 struct gve_tx_ring {
 	/* Cacheline 0 -- Accessed & dirtied during transmit */
+	void __iomem *q_db;
 	union {
 		/* GQI fields */
 		struct {

@@ -306,9 +306,8 @@ err:
 void gve_rx_write_doorbell_dqo(const struct gve_priv *priv, int queue_idx)
 {
 	const struct gve_rx_ring *rx = &priv->rx[queue_idx];
-	u64 index = be32_to_cpu(rx->q_resources->db_index);
 
-	iowrite32(rx->dqo.bufq.tail, &priv->db_bar2[index]);
+	iowrite32(rx->dqo.bufq.tail, rx->q_db);
 }
 
 int gve_rx_alloc_rings_dqo(struct gve_priv *priv,

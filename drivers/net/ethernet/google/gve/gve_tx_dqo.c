@@ -117,7 +117,7 @@ void gve_xdp_tx_flush_dqo(struct gve_priv *priv, u32 xdp_qid)
 	u32 tx_qid = gve_xdp_tx_queue_id(priv, xdp_qid);
 	struct gve_tx_ring *tx = &priv->tx[tx_qid];
 
-	gve_tx_put_doorbell_dqo(priv, tx->q_resources, tx->dqo_tx.tail);
+	gve_tx_put_doorbell_dqo(priv, tx, tx->dqo_tx.tail);
 }
 
 static struct gve_tx_pending_packet_dqo *
@@ -1070,14 +1070,14 @@ netdev_tx_t gve_tx_dqo(struct sk_buff *skb, struct net_device *dev)
 		 * queue for want of resources, but prior calls to gve_tx()
 		 * may have added descriptors without ringing the doorbell.
 		 */
-		gve_tx_put_doorbell_dqo(priv, tx->q_resources, tx->dqo_tx.tail);
+		gve_tx_put_doorbell_dqo(priv, tx, tx->dqo_tx.tail);
 		return NETDEV_TX_BUSY;
 	}
 
 	if (!netif_xmit_stopped(tx->netdev_txq) && netdev_xmit_more())
 		return NETDEV_TX_OK;
 
-	gve_tx_put_doorbell_dqo(priv, tx->q_resources, tx->dqo_tx.tail);
+	gve_tx_put_doorbell_dqo(priv, tx, tx->dqo_tx.tail);
 	return NETDEV_TX_OK;
 }
 
@@ -1124,7 +1124,7 @@ static bool gve_xsk_tx_dqo(struct gve_priv *priv, struct gve_tx_ring *tx,
 	}
 
 	if (sent) {
-		gve_tx_put_doorbell_dqo(priv, tx->q_resources, tx->dqo_tx.tail);
+		gve_tx_put_doorbell_dqo(priv, tx, tx->dqo_tx.tail);
 		xsk_tx_release(pool);
 	}
 
@@ -1603,7 +1603,7 @@ int gve_xdp_xmit_dqo(struct net_device *dev, int n, struct xdp_frame **frames,
 	}
 
 	if (flags & XDP_XMIT_FLUSH)
-		gve_tx_put_doorbell_dqo(priv, tx->q_resources, tx->dqo_tx.tail);
+		gve_tx_put_doorbell_dqo(priv, tx, tx->dqo_tx.tail);
 
 	spin_unlock(&tx->dqo_tx.xdp_lock);
 

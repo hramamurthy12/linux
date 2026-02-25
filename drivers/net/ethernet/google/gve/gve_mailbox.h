@@ -45,6 +45,7 @@
 
 struct gve_priv;
 struct gve_mailbox;
+struct gve_queue_resources;
 
 struct gve_dma_mem {
 	void *va;

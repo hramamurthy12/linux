@@ -1858,6 +1858,7 @@ int gve_adminq_create_queues(struct gve_priv *priv)
 {
 	int num_tx_queues = gve_num_tx_queues(priv);
 	int err;
+	int i;
 
 	err = gve_adminq_create_tx_queues(priv, 0, num_tx_queues);
 	if (err) {
@@ -1868,6 +1869,14 @@ int gve_adminq_create_queues(struct gve_priv *priv)
 	netif_dbg(priv, drv, priv->dev, "created %d tx queues\n",
 		  num_tx_queues);
 
+	for (i = 0; i < num_tx_queues; i++) {
+		struct gve_tx_ring *tx = &priv->tx[i];
+		u32 db_idx;
+
+		db_idx = be32_to_cpu(tx->q_resources->db_index);
+		tx->q_db = &priv->db_bar2[db_idx];
+	}
+
 	err = gve_adminq_create_rx_queues(priv, priv->rx_cfg.num_queues);
 	if (err) {
 		netif_err(priv, drv, priv->dev, "failed to create %d rx queues\n",
@@ -1876,6 +1885,14 @@ int gve_adminq_create_queues(struct gve_priv *priv)
 	}
 	netif_dbg(priv, drv, priv->dev, "created %d rx queues\n",
 		  priv->rx_cfg.num_queues);
+
+	for (i = 0; i < priv->rx_cfg.num_queues; i++) {
+		struct gve_rx_ring *rx = &priv->rx[i];
+		u32 db_idx;
+
+		db_idx = be32_to_cpu(rx->q_resources->db_index);
+		rx->q_db = &priv->db_bar2[db_idx];
+	}
 
 	return err;
 }

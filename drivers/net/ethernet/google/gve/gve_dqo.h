@@ -67,12 +67,9 @@ void gve_xdp_tx_flush_dqo(struct gve_priv *priv, u32 xdp_qid);
 
 static inline void
 gve_tx_put_doorbell_dqo(struct gve_priv *priv,
-			const struct gve_queue_resources *q_resources, u32 val)
+			struct gve_tx_ring *tx, u32 val)
 {
-	u64 index;
-
-	index = be32_to_cpu(q_resources->db_index);
-	iowrite32(val, &priv->db_bar2[index]);
+	iowrite32(val, tx->q_db);
 }
 
 /* Builds register value to write to DQO IRQ doorbell to enable with specified

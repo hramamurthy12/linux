@@ -350,19 +350,6 @@ struct gve_adminq_create_rx_queue {
 
 static_assert(sizeof(struct gve_adminq_create_rx_queue) == 56);
 
-/* Queue resources that are shared with the device */
-struct gve_queue_resources {
-	union {
-		struct {
-			__be32 db_index;	/* Device -> Guest */
-			__be32 counter_index;	/* Device -> Guest */
-		};
-		u8 reserved[64];
-	};
-};
-
-static_assert(sizeof(struct gve_queue_resources) == 64);
-
 struct gve_adminq_destroy_tx_queue {
 	__be32 queue_id;
 };

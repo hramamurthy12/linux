@@ -14,10 +14,10 @@
 #include <net/xdp_sock_drv.h>
 
 static inline void gve_tx_put_doorbell(struct gve_priv *priv,
-				       struct gve_queue_resources *q_resources,
+				       struct gve_tx_ring *tx,
 				       u32 val)
 {
-	iowrite32be(val, &priv->db_bar2[be32_to_cpu(q_resources->db_index)]);
+	iowrite32be(val, tx->q_db);
 }
 
 void gve_xdp_tx_flush(struct gve_priv *priv, u32 xdp_qid)
@@ -25,7 +25,7 @@ void gve_xdp_tx_flush(struct gve_priv *priv, u32 xdp_qid)
 	u32 tx_qid = gve_xdp_tx_queue_id(priv, xdp_qid);
 	struct gve_tx_ring *tx = &priv->tx[tx_qid];
 
-	gve_tx_put_doorbell(priv, tx->q_resources, tx->req);
+	gve_tx_put_doorbell(priv, tx, tx->req);
 }
 
 /* gvnic can only transmit from a Registered Segment.
@@ -747,7 +747,7 @@ netdev_tx_t gve_tx(struct sk_buff *skb, struct net_device *dev)
 		 * may have added descriptors without ringing the doorbell.
 		 */
 
-		gve_tx_put_doorbell(priv, tx->q_resources, tx->req);
+		gve_tx_put_doorbell(priv, tx, tx->req);
 		return NETDEV_TX_BUSY;
 	}
 	if (tx->raw_addressing)
@@ -770,7 +770,7 @@ netdev_tx_t gve_tx(struct sk_buff *skb, struct net_device *dev)
 	/* Give packets to NIC. Even if this packet failed to send the doorbell
 	 * might need to be rung because of xmit_more.
 	 */
-	gve_tx_put_doorbell(priv, tx->q_resources, tx->req);
+	gve_tx_put_doorbell(priv, tx, tx->req);
 	return NETDEV_TX_OK;
 }
 
@@ -848,7 +848,7 @@ int gve_xdp_xmit_gqi(struct net_device *dev, int n, struct xdp_frame **frames,
 	}
 
 	if (flags & XDP_XMIT_FLUSH)
-		gve_tx_put_doorbell(priv, tx->q_resources, tx->req);
+		gve_tx_put_doorbell(priv, tx, tx->req);
 
 	spin_unlock(&tx->xdp_lock);
 
@@ -961,7 +961,7 @@ static int gve_xsk_tx(struct gve_priv *priv, struct gve_tx_ring *tx,
 	}
 out:
 	if (sent > 0) {
-		gve_tx_put_doorbell(priv, tx->q_resources, tx->req);
+		gve_tx_put_doorbell(priv, tx, tx->req);
 		xsk_tx_release(tx->xsk_pool);
 	}
 	spin_unlock(&tx->xdp_lock);
