@@ -391,6 +391,50 @@ int gve_mbx_get_ptype_map(struct gve_priv *priv)
 	return err;
 }
 
+int gve_mbx_configure_rss(struct gve_priv *priv,
+			  struct ethtool_rxfh_param *rxfh)
+{
+	struct gve_mbx_configure_rss_req *req;
+	size_t request_size;
+	int err = 0;
+	int i;
+
+	request_size = struct_size(req, hash_lut, rxfh->indir_size);
+	req = kzalloc(request_size, GFP_KERNEL);
+	if (!req)
+		return -ENOMEM;
+
+	switch (rxfh->hfunc) {
+	case ETH_RSS_HASH_NO_CHANGE:
+		fallthrough;
+	case ETH_RSS_HASH_TOP:
+		req->hash_alg = GVE_MBX_HASH_ALG_TOEPLITZ;
+		break;
+	default:
+		err = -EOPNOTSUPP;
+		goto free_request;
+	}
+
+	req->hash_key_size = rxfh->key_size;
+	if (rxfh->key)
+		memcpy(req->hash_key, rxfh->key, rxfh->key_size);
+
+	req->hash_lut_size = rxfh->indir_size;
+	if (rxfh->indir) {
+		for (i = 0; i < req->hash_lut_size; i++)
+			req->hash_lut[i] = rxfh->indir[i];
+	}
+
+	err = gve_send_mbx_msg_wait(priv->mailbox, GVE_MBX_CONFIGURE_RSS,
+				    request_size, (u8 *)req);
+	if (err)
+		dev_err(&priv->pdev->dev, "Failed to configure RSS.");
+
+free_request:
+	kfree(req);
+	return err;
+}
+
 static void gve_post_rx_buffs(struct gve_mailbox *mailbox)
 {
 	struct gve_mbx_queue *mbx_rx = mailbox->mbx_rx;
@@ -587,6 +631,9 @@ static int gve_process_mbx_msg(struct gve_mailbox *mailbox, u32 opcode,
 		break;
 	case GVE_MBX_GET_PTYPE_MAP:
 		err = gve_mbx_process_ptype_map(mailbox, recv_msg);
+		break;
+	case GVE_MBX_CONFIGURE_RSS:
+		/* No processing needed. */
 		break;
 	default:
 		err = -EBADMSG;

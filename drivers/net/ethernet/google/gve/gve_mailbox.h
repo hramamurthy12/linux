@@ -120,6 +120,7 @@ enum gve_mbx_opcode {
 	GVE_MBX_NEGOTIATE_CAPABILITIES	= 0x6001,
 	GVE_MBX_GET_INTERRUPT_DBS	= 0x6005,
 	GVE_MBX_GET_PTYPE_MAP		= 0x6006,
+	GVE_MBX_CONFIGURE_RSS		= 0x6011,
 };
 
 enum gve_mbx_caps {
@@ -231,6 +232,20 @@ struct gve_mbx_get_interrupt_dbs_resp {
 	struct gve_mbx_interrupt_db_info info[];
 };
 
+enum gve_mbx_hash_alg {
+	GVE_MBX_HASH_ALG_TOEPLITZ = 1,
+};
+
+struct gve_mbx_configure_rss_req {
+	__le16 hash_types;
+	u8 hash_alg;
+	u8 reserved;
+	__le16 hash_key_size;
+	__le16 hash_lut_size;
+	u8 hash_key[256];
+	__le32 hash_lut[];
+};
+
 struct gve_mbx_desc {
 	__le16 flags;			/* DD bit, extra payload etc */
 	__le16 destination;		/* send to CP/HMA 0x0801 */
@@ -257,6 +272,8 @@ int gve_mbx_request_db_info(struct gve_priv *priv);
 int gve_mbx_setup_mgmt_irq(struct gve_priv *priv);
 void gve_mbx_teardown_mgmt_irq(struct gve_priv *priv);
 int gve_mbx_get_ptype_map(struct gve_priv *priv);
+int gve_mbx_configure_rss(struct gve_priv *priv,
+			  struct ethtool_rxfh_param *rxfh);
 int gve_mbx_negotiate_caps(struct gve_mailbox *mailbox);
 void gve_mbx_task(struct work_struct *work);
 int gve_send_mbx_msg_wait(struct gve_mailbox *mailbox, u32 opcode, u16 msg_size,

@@ -2448,6 +2448,7 @@ static const struct gve_ctrl_ops gve_mbx_ops = {
 	.get_ptype_map		= gve_mbx_get_ptype_map,
 	.setup_mgmt_irq		= gve_mbx_setup_mgmt_irq,
 	.teardown_mgmt_irq	= gve_mbx_teardown_mgmt_irq,
+	.configure_rss		= gve_mbx_configure_rss,
 };
 
 static const struct gve_ctrl_ops gve_adminq_ops = {
