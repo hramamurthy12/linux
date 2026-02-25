@@ -121,6 +121,12 @@ enum gve_mbx_opcode {
 	GVE_MBX_NEGOTIATE_CAPABILITIES	= 0x6001,
 	GVE_MBX_GET_INTERRUPT_DBS	= 0x6005,
 	GVE_MBX_GET_PTYPE_MAP		= 0x6006,
+	GVE_MBX_CONFIG_TX_QUEUES	= 0x6008,
+	GVE_MBX_CONFIG_RX_QUEUES        = 0x6009,
+	GVE_MBX_ENABLE_TX_QUEUES        = 0x600c,
+	GVE_MBX_ENABLE_RX_QUEUES        = 0x600d,
+	GVE_MBX_DISABLE_TX_QUEUES	= 0x600e,
+	GVE_MBX_DISABLE_RX_QUEUES       = 0x600f,
 	GVE_MBX_CONFIGURE_RSS		= 0x6011,
 };
 
@@ -245,6 +251,83 @@ struct gve_mbx_configure_rss_req {
 	__le16 hash_lut_size;
 	u8 hash_key[256];
 	__le32 hash_lut[];
+};
+
+struct gve_mbx_tx_q_info {
+	__le32 queue_id;
+#define GVE_MBX_NO_INTERRUPT 0xffff
+	__le16 msix_index;
+	u8 pad1[2];
+#define GVE_RAW_ADDRESSING_QPL_ID 0xFFFFFFFF
+	__le32 queue_page_list_id;
+	u8 pad2[4];
+	__le64 tx_ring_addr;
+	__le64 tx_comp_ring_addr;
+	__le16 tx_ring_size;
+	__le16 tx_comp_ring_size;
+	u8 pad3[4];
+};
+
+struct gve_mbx_config_tx_q_req {
+	__le16 num_queues;
+	u8 pad[6];
+	struct gve_mbx_tx_q_info tx_queues[] __counted_by_le(num_queues);
+};
+
+struct gve_mbx_configured_tx_q_info {
+	__le32 queue_id;
+	__le32 tail_db_offset;
+};
+
+struct gve_mbx_config_tx_qs_resp {
+	__le16 num_queues;
+	u8 pad[6];
+	struct gve_mbx_configured_tx_q_info queues[] __counted_by_le(num_queues);
+};
+
+enum gve_mbx_rx_queue_flags {
+	GVE_MBX_RX_QUEUE_ENABLE_RSC = BIT(0),
+};
+
+struct gve_mbx_rx_q_info {
+	__le32 queue_id;
+	__le16 msix_index;
+	u8 pad[2];
+	__le32 queue_page_list_id;
+	__le32 flags;
+	__le64 rx_desc_ring_addr;
+	__le64 rx_data_ring_addr;
+	__le16 rx_desc_ring_size;
+	__le16 rx_data_ring_size;
+	__le16 packet_buffer_size;
+	__le16 header_buffer_size;
+};
+
+struct gve_mbx_config_rx_qs_req {
+	__le16 num_queues;
+	u8 pad[6];
+	struct gve_mbx_rx_q_info rx_queues[] __counted_by_le(num_queues);
+};
+
+struct gve_mbx_configured_rx_q_info {
+	__le32 queue_id;
+	__le32 tail_db_offset;
+};
+
+struct gve_mbx_config_rx_qs_resp {
+	__le16 num_queues;
+	u8 pad[6];
+	struct gve_mbx_configured_rx_q_info queues[] __counted_by_le(num_queues);
+};
+
+struct gve_mbx_disable_qs_req {
+	__le16 num_queues;
+	__le16 queue_id[] __counted_by_le(num_queues);
+};
+
+struct gve_mbx_enable_qs_req {
+	__le16 num_queues;
+	__le16 queue_id[] __counted_by_le(num_queues);
 };
 
 struct gve_mbx_desc {
