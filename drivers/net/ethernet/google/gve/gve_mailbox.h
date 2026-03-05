@@ -200,6 +200,10 @@ struct gve_mbx_desc {
 	__le32 addr_low;		/* of the allocated buffer */
 };
 
+int gve_mbx_set_num_ntfy_blks(struct gve_priv *priv);
+void gve_mbx_set_num_queues(struct gve_priv *priv);
+void gve_mbx_get_max_queues(struct gve_mailbox *mailbox, int *max_tx_queues,
+			    int *max_rx_queues);
 int gve_mbx_negotiate_caps(struct gve_mailbox *mailbox);
 void gve_mbx_task(struct work_struct *work);
 int gve_send_mbx_msg_wait(struct gve_mailbox *mailbox, u32 opcode, u16 msg_size,
@@ -210,4 +214,25 @@ int gve_receive_mbx_msg(struct gve_mailbox *mailbox);
 void gve_free_mailbox(struct gve_mailbox *mailbox, void __iomem *reg_bar0);
 int gve_initialize_mbx(struct gve_mailbox *mailbox, void __iomem *reg_bar0);
 int gve_mbx_reset(struct gve_mailbox *mailbox, void __iomem *reg_bar0);
+
+static inline int gve_mbx_map_db_bar(struct gve_priv *priv)
+{
+	return 0;
+}
+
+static inline void gve_mbx_unmap_db_bar(struct gve_priv *priv)
+{
+}
+
+static inline int gve_mbx_setup_stats_report(struct gve_priv *priv,
+					     u64 stats_report_len,
+					     dma_addr_t stats_report_addr,
+					     u64 interval)
+{
+	return 0;
+}
+
+static inline void gve_mbx_free_db_resources(struct gve_priv *priv)
+{
+}
 #endif /* _GVE_MAILBOX_H */

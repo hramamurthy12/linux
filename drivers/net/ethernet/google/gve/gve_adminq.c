@@ -1847,6 +1847,13 @@ void gve_adminq_teardown_mgmt_irq(struct gve_priv *priv)
 	}
 }
 
+void gve_adminq_get_max_queues(struct gve_registers __iomem *reg_bar,
+			       int *max_tx_queues, int *max_rx_queues)
+{
+	*max_tx_queues = ioread32be(&reg_bar->max_tx_queues);
+	*max_rx_queues = ioread32be(&reg_bar->max_rx_queues);
+}
+
 int gve_adminq_create_queues(struct gve_priv *priv)
 {
 	int num_tx_queues = gve_num_tx_queues(priv);

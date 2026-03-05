@@ -17,7 +17,6 @@
 #include <linux/sched.h>
 #include <linux/timer.h>
 #include <linux/workqueue.h>
-#include <linux/version.h>
 #include <net/netdev_queues.h>
 #include <net/sch_generic.h>
 #include <net/xdp_sock_drv.h>
@@ -2418,6 +2417,15 @@ static int gve_setup_device(struct gve_priv *priv)
 	return 0;
 }
 
+static const struct gve_ctrl_ops gve_mbx_ops = {
+	.map_db_bar		= gve_mbx_map_db_bar,
+	.unmap_db_bar		= gve_mbx_unmap_db_bar,
+	.set_num_queues		= gve_mbx_set_num_queues,
+	.set_num_ntfy_blks	= gve_mbx_set_num_ntfy_blks,
+	.setup_stats_report	= gve_mbx_setup_stats_report,
+	.free_db_resources	= gve_mbx_free_db_resources,
+};
+
 static const struct gve_ctrl_ops gve_adminq_ops = {
 	.map_db_bar		= gve_adminq_map_db_bar,
 	.unmap_db_bar		= gve_adminq_unmap_db_bar,
@@ -2784,6 +2792,7 @@ static int gve_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	int max_tx_queues, max_rx_queues;
 	struct net_device *dev;
+	struct gve_device_info device_info = {0};
 	struct gve_registers __iomem *reg_bar;
 	struct gve_mailbox *mailbox;
 	bool mailbox_mode = false;
@@ -2814,11 +2823,13 @@ static int gve_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	}
 
 	mailbox_mode = gve_check_mailbox_mode(pdev);
+	device_info.queue_format = GVE_QUEUE_FORMAT_UNSPECIFIED;
+
 	if (mailbox_mode) {
 		mailbox = kzalloc(sizeof(*mailbox), GFP_KERNEL);
 		if (!mailbox) {
 			err = -ENOMEM;
-			goto abort_with_pci_region;
+			goto abort_with_reg_bar;
 		}
 
 		mailbox->pdev = pdev;
@@ -2828,11 +2839,30 @@ static int gve_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 				"Failed to initialize mailbox queues\n");
 			goto abort_with_reg_bar;
 		}
+
+		/* get device properties */
+		mailbox->device_info = &device_info;
+		err = gve_mbx_negotiate_caps(mailbox);
+		if (err) {
+			dev_err(&pdev->dev,
+				"Failed to get device properties\n");
+			err = -EINVAL;
+			goto abort_with_reg_bar;
+		}
 	}
 
 	/* Get max queues to alloc etherdev */
-	max_tx_queues = ioread32be(&reg_bar->max_tx_queues);
-	max_rx_queues = ioread32be(&reg_bar->max_rx_queues);
+	if (mailbox_mode)
+		gve_mbx_get_max_queues(mailbox, &max_tx_queues, &max_rx_queues);
+	else
+		gve_adminq_get_max_queues(reg_bar, &max_tx_queues,
+					  &max_rx_queues);
+
+	if (!max_tx_queues || !max_rx_queues) {
+		err = -EINVAL;
+		goto abort_with_reg_bar;
+	}
+
 	/* Alloc and setup the netdev and priv */
 	dev = alloc_etherdev_mqs(sizeof(*priv), max_tx_queues, max_rx_queues);
 	if (!dev) {
@@ -2875,27 +2905,34 @@ static int gve_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	priv->ethtool_flags = 0x0;
 	priv->rx_cfg.packet_buffer_size = GVE_DEFAULT_RX_BUFFER_SIZE;
 	priv->max_rx_buffer_size = GVE_DEFAULT_RX_BUFFER_SIZE;
-	priv->mailbox_mode = mailbox_mode;
-	priv->mailbox = mailbox;
-	mailbox->priv = priv;
 
-	err = gve_adminq_init(priv);
-	if (err) {
-		dev_err(&priv->pdev->dev,
-			"Failed to alloc admin queue: err=%d\n", err);
-		goto abort_with_netdev;
+	if (mailbox_mode) {
+		priv->mailbox_mode = mailbox_mode;
+		priv->mailbox = mailbox;
+		mailbox->priv = priv;
+		priv->device_info = device_info;
+		priv->queue_format = device_info.queue_format;
+	} else {
+		err = gve_adminq_init(priv);
+		if (err) {
+			dev_err(&priv->pdev->dev,
+				"Failed to alloc admin queue: err=%d\n", err);
+			goto abort_with_netdev;
+		}
+
+		err = gve_adminq_get_device_properties(priv);
+		if (err) {
+			dev_err(&priv->pdev->dev,
+				"Could not get device information: err=%d\n", err);
+			goto abort_with_adminq;
+		}
 	}
 
-	priv->device_info.queue_format = GVE_QUEUE_FORMAT_UNSPECIFIED;
-	err = gve_adminq_get_device_properties(priv);
-	if (err) {
-		dev_err(&priv->pdev->dev,
-			"Could not get device information: err=%d\n", err);
-		goto abort_with_adminq;
-	}
-
-	/* Set adminq ctrl ops */
-	priv->ctrl_ops = &gve_adminq_ops;
+	/* Set ctrl ops based on mode */
+	if (priv->mailbox_mode)
+		priv->ctrl_ops = &gve_mbx_ops;
+	else
+		priv->ctrl_ops = &gve_adminq_ops;
 
 	err = priv->ctrl_ops->map_db_bar(priv);
 	if (err) {
@@ -2949,7 +2986,8 @@ abort_with_unmap_db_bar:
 	priv->ctrl_ops->unmap_db_bar(priv);
 
 abort_with_adminq:
-	gve_adminq_free(priv);
+	if (!mailbox_mode)
+		gve_adminq_free(priv);
 
 abort_with_netdev:
 	free_netdev(dev);

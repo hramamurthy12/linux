@@ -628,6 +628,8 @@ int gve_adminq_configure_device_resources(struct gve_priv *priv,
 					  dma_addr_t db_array_bus_addr,
 					  u32 num_ntfy_blks);
 int gve_adminq_deconfigure_device_resources(struct gve_priv *priv);
+void gve_adminq_get_max_queues(struct gve_registers __iomem *reg_bar,
+			       int *max_tx_queues, int *max_rx_queues);
 int gve_adminq_create_queues(struct gve_priv *priv);
 int gve_adminq_destroy_queues(struct gve_priv *priv);
 int gve_adminq_create_tx_queues(struct gve_priv *priv, u32 start_id, u32 num_queues);

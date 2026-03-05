@@ -312,6 +312,34 @@ prep_desc:
 	}
 }
 
+int gve_mbx_set_num_ntfy_blks(struct gve_priv *priv)
+{
+	/* The first vector is reserved for mailbox interrupt */
+	priv->num_ntfy_blks = priv->device_info.num_msix_vectors - 1;
+	priv->mgmt_msix_idx = 0;
+	return 0;
+}
+
+void gve_mbx_set_num_queues(struct gve_priv *priv)
+{
+	struct gve_device_info *device_info = &priv->device_info;
+
+	priv->tx_cfg.max_queues = device_info->max_tx_queues;
+	priv->rx_cfg.max_queues = device_info->max_rx_queues;
+
+	priv->tx_cfg.num_queues = device_info->default_tx_queues;
+	priv->rx_cfg.num_queues = device_info->default_rx_queues;
+}
+
+void gve_mbx_get_max_queues(struct gve_mailbox *mailbox, int *max_tx_queues,
+			    int *max_rx_queues)
+{
+	struct gve_device_info *device_info = mailbox->device_info;
+
+	*max_tx_queues = device_info->max_tx_queues;
+	*max_rx_queues = device_info->max_rx_queues;
+}
+
 static void gve_mbx_process_caps(struct gve_mailbox *mailbox,
 				 struct gve_mbx_caps_resp *caps_resp)
 {
