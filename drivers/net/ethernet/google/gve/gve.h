@@ -29,6 +29,7 @@
 #endif
 
 #define PCI_DEV_ID_GVNIC	0x0042
+#define PCI_DEV_ID_GVNIC_MBX	0x0043
 
 #define GVE_REGISTER_BAR	0
 #define GVE_DOORBELL_BAR	2

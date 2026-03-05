@@ -2814,6 +2814,11 @@ static const struct netdev_stat_ops gve_stat_ops = {
 
 static bool gve_check_mailbox_mode(const struct pci_dev *pdev)
 {
+	if (pdev->device == PCI_DEV_ID_GVNIC_MBX) {
+		dev_info(&pdev->dev, "Device in mailbox mode\n");
+		return true;
+	}
+
 	return false;
 }
 
@@ -3108,6 +3113,7 @@ static int gve_resume(struct pci_dev *pdev)
 
 static const struct pci_device_id gve_id_table[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_GOOGLE, PCI_DEV_ID_GVNIC) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_GOOGLE, PCI_DEV_ID_GVNIC_MBX) },
 	{ }
 };
 
