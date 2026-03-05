@@ -810,6 +810,8 @@ struct gve_device_info {
 	u16 max_rx_ring_size;
 	u16 min_tx_ring_size;
 	u16 min_rx_ring_size;
+	u16 num_msix_vectors;
+	u32 mbx_irq_db_offset;
 	u16 max_mtu;
 	u8 mac[ETH_ALEN];
 	u16 max_rx_buffer_size;
@@ -838,6 +840,7 @@ struct gve_mailbox {
 	struct gve_mbx_msg **mbx_msgs;
 	struct workqueue_struct *gve_mbx_wq;
 	struct delayed_work gve_mbx_task;
+	struct gve_device_info *device_info;
 };
 
 /**

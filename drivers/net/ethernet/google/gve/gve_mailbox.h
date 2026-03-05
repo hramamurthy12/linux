@@ -43,6 +43,7 @@
 
 #define GVE_MBX_MSG_TIMEOUT_MSEC	60000
 
+struct gve_priv;
 struct gve_mailbox;
 
 struct gve_dma_mem {
@@ -115,6 +116,72 @@ struct gve_mbx_msg {
 	int status;
 };
 
+enum gve_mbx_opcode {
+	GVE_MBX_NEGOTIATE_CAPABILITIES	= 0x6001,
+};
+
+enum gve_mbx_caps {
+	GVE_MBX_CAP_DQO_RDA		= BIT(0),
+	GVE_MBX_CAP_DQO_QPL		= BIT(1),
+	GVE_MBX_CAP_INTERRUPT_SHARING	= BIT(2),
+	GVE_MBX_CAP_FLOW_STEERING	= BIT(3),
+	GVE_MBX_CAP_NIC_TSTAMP_REG	= BIT(4),
+	GVE_MBX_CAP_NIC_TSTAMP_CMD	= BIT(5),
+	GVE_MBX_CAP_HW_GRO		= BIT(6),
+};
+
+enum gve_mbx_negotiate_caps_msg_version {
+	GVE_MBX_CAPS_MSG_V1 = 1,
+};
+
+struct gve_mbx_caps_req {
+	__le32 msg_version;
+	__le32 msg_size;
+	__le64 supported_caps;
+	u8 os_type; /* 0x01 = Linux */
+	u8 driver_major;
+	u8 driver_minor;
+	u8 driver_sub;
+	__le32 os_version_major;
+	__le32 os_version_minor;
+	__le32 os_version_sub;
+	u8 os_version_str[512];
+	u8 driver_version_str[64];
+};
+
+/* this structure layout cannot be modified,
+ * new fields to be only added in the end
+ * when bumping msg_version
+ */
+struct gve_mbx_caps_resp {
+	__le32 msg_version;
+	__le32 msg_size;
+	__le64 negotiated_caps;
+	u8 db_bar; /* doorbell BAR no */
+	u8 pad[3];
+	/* Offset in bytes into db_bar for mbx IRQ doorbell register */
+	__le32 mbx_irq_db_offset;
+	__le16 mbx_response_timeout_ms;
+	__le16 tx_queue_watchdog_timeout_ms;
+	__le16 num_msix_vectors;
+	__le16 default_tx_queues;
+	__le16 default_rx_queues;
+	__le16 max_tx_queues;
+	__le16 max_rx_queues;
+	__le16 max_mtu;
+	u8 mac[ETH_ALEN];
+	__le16 default_tx_ring_size;
+	__le16 default_rx_ring_size;
+	__le16 max_tx_ring_size;
+	__le16 max_rx_ring_size;
+	__le16 min_tx_ring_size;
+	__le16 min_rx_ring_size;
+	__le16 max_packet_buffer_size;
+	__le16 max_header_buffer_size;
+	__le16 hash_key_size;
+	__le16 hash_lut_size;
+};
+
 struct gve_mbx_desc {
 	__le16 flags;			/* DD bit, extra payload etc */
 	__le16 destination;		/* send to CP/HMA 0x0801 */
@@ -133,6 +200,7 @@ struct gve_mbx_desc {
 	__le32 addr_low;		/* of the allocated buffer */
 };
 
+int gve_mbx_negotiate_caps(struct gve_mailbox *mailbox);
 void gve_mbx_task(struct work_struct *work);
 int gve_send_mbx_msg_wait(struct gve_mailbox *mailbox, u32 opcode, u16 msg_size,
 			  u8 *msg);

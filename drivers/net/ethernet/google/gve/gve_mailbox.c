@@ -231,6 +231,44 @@ dma_alloc_error:
 	return err;
 }
 
+static void gve_fill_version_info(struct gve_mbx_caps_req *gve_caps_msg)
+{
+	gve_caps_msg->os_type = 1; /* Linux */
+	gve_caps_msg->os_version_major = cpu_to_le32(LINUX_VERSION_MAJOR);
+	gve_caps_msg->os_version_minor = cpu_to_le32(LINUX_VERSION_SUBLEVEL);
+	gve_caps_msg->os_version_sub = cpu_to_le32(LINUX_VERSION_PATCHLEVEL);
+
+	strscpy(gve_caps_msg->os_version_str, utsname()->release,
+		sizeof(gve_caps_msg->os_version_str));
+	strscpy(gve_caps_msg->driver_version_str, utsname()->version,
+		sizeof(gve_caps_msg->driver_version_str));
+}
+
+int gve_mbx_negotiate_caps(struct gve_mailbox *mailbox)
+{
+	struct gve_mbx_caps_req *gve_caps_msg;
+	int err;
+
+	gve_caps_msg = kzalloc(sizeof(*gve_caps_msg), GFP_KERNEL);
+	if (!gve_caps_msg)
+		return -ENOMEM;
+
+	gve_caps_msg->msg_version =  cpu_to_le32(GVE_MBX_CAPS_MSG_V1);
+	gve_caps_msg->supported_caps |= cpu_to_le64(GVE_MBX_CAP_DQO_RDA);
+	gve_fill_version_info(gve_caps_msg);
+	gve_caps_msg->msg_size = cpu_to_le32(sizeof(*gve_caps_msg));
+
+	err = gve_send_mbx_msg_wait(mailbox, GVE_MBX_NEGOTIATE_CAPABILITIES,
+				    sizeof(*gve_caps_msg), (u8 *)gve_caps_msg);
+	if (err)
+		dev_err(&mailbox->pdev->dev, "Failed to send negotiate caps mailbox msg\n");
+	else
+		dev_info(&mailbox->pdev->dev, "hramamurthy: Successfully sent negotiate caps mailbox msg\n");
+
+	kfree(gve_caps_msg);
+	return 0;
+}
+
 static void gve_post_rx_buffs(struct gve_mailbox *mailbox)
 {
 	struct gve_mbx_queue *mbx_rx = mailbox->mbx_rx;
@@ -274,12 +312,91 @@ prep_desc:
 	}
 }
 
+static void gve_mbx_process_caps(struct gve_mailbox *mailbox,
+				 struct gve_mbx_caps_resp *caps_resp)
+{
+	struct device *dev = &mailbox->pdev->dev;
+	u64 caps = le64_to_cpu(caps_resp->negotiated_caps);
+
+	/* Decode and print the negotiated capability flags */
+	if (caps & GVE_MBX_CAP_DQO_RDA) {
+		mailbox->device_info->queue_format = GVE_DQO_RDA_FORMAT;
+		dev_info(dev, "GVE_MBX_CAP_DQO_RDA supported\n");
+	}
+
+	if (caps & GVE_MBX_CAP_DQO_QPL) {
+		mailbox->device_info->queue_format = GVE_DQO_QPL_FORMAT;
+		dev_info(dev, "GVE_MBX_CAP_DQO_QPL supported\n");
+	}
+
+	if (caps & GVE_MBX_CAP_INTERRUPT_SHARING)
+		dev_info(dev, "GVE_MBX_CAP_INTERRUPT_SHARING supported\n");
+
+	if (caps & GVE_MBX_CAP_FLOW_STEERING)
+		dev_info(dev, "GVE_MBX_CAP_FLOW_STEERING supported\n");
+
+	if (caps & GVE_MBX_CAP_NIC_TSTAMP_REG)
+		dev_info(dev, "GVE_MBX_CAP_NIC_TSTAMP_REG supported\n");
+
+	if (caps & GVE_MBX_CAP_NIC_TSTAMP_CMD)
+		dev_info(dev, "GVE_MBX_CAP_NIC_TSTAMP_CMD supported\n");
+
+	if (caps & GVE_MBX_CAP_HW_GRO)
+		dev_info(dev, "GVE_MBX_CAP_HW_GRO supported\n");
+}
+
+static int gve_mbx_fill_device_properties(struct gve_mailbox *mailbox,
+					  struct gve_dma_mem *recv_msg)
+{
+	struct gve_device_info *device_info = mailbox->device_info;
+	struct gve_mbx_caps_resp *caps = recv_msg->va;
+
+	if (!recv_msg)
+		return -EBADMSG;
+
+	gve_mbx_process_caps(mailbox, caps);
+
+	/* queue properties */
+	device_info->default_tx_queues = le16_to_cpu(caps->default_tx_queues);
+	device_info->default_rx_queues = le16_to_cpu(caps->default_rx_queues);
+	device_info->max_tx_queues = le16_to_cpu(caps->max_tx_queues);
+	device_info->max_rx_queues = le16_to_cpu(caps->max_rx_queues);
+
+	/* ring size properties */
+	device_info->default_tx_ring_size =
+					le16_to_cpu(caps->default_tx_ring_size);
+	device_info->default_rx_ring_size =
+					le16_to_cpu(caps->default_rx_ring_size);
+	device_info->max_tx_ring_size = le16_to_cpu(caps->max_tx_ring_size);
+	device_info->max_rx_ring_size = le16_to_cpu(caps->max_rx_ring_size);
+	device_info->min_tx_ring_size = le16_to_cpu(caps->min_tx_ring_size);
+	device_info->min_rx_ring_size = le16_to_cpu(caps->min_rx_ring_size);
+
+	device_info->num_msix_vectors = le16_to_cpu(caps->num_msix_vectors);
+	device_info->mbx_irq_db_offset = le32_to_cpu(caps->mbx_irq_db_offset);
+	device_info->max_mtu = le16_to_cpu(caps->max_mtu);
+	ether_addr_copy(device_info->mac, caps->mac);
+
+	device_info->max_rx_buffer_size =
+				le16_to_cpu(caps->max_packet_buffer_size);
+	device_info->header_buf_size =
+				le16_to_cpu(caps->max_header_buffer_size);
+
+	device_info->rss_key_size = le16_to_cpu(caps->hash_key_size);
+	device_info->rss_lut_size = le16_to_cpu(caps->hash_lut_size);
+	device_info->cache_rss_config = false;
+	return 0;
+}
+
 static int gve_process_mbx_msg(struct gve_mailbox *mailbox, u32 opcode,
 			       struct gve_dma_mem *recv_msg)
 {
 	int err = 0;
 
 	switch (opcode) {
+	case GVE_MBX_NEGOTIATE_CAPABILITIES:
+		err = gve_mbx_fill_device_properties(mailbox, recv_msg);
+		break;
 	default:
 		err = -EBADMSG;
 		dev_err_ratelimited(&mailbox->pdev->dev,
